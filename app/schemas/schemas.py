@@ -42,7 +42,7 @@ class TrainingJobStatus(str, Enum):
 
 # ========== Device Schemas ==========
 class DeviceBase(BaseModel):
-    device_name: str = Field(..., min_length=1, max_length=64, pattern=r"^[a-zA-Z0-9_-]+$")
+    device_name: str = Field(..., min_length=1, max_length=64, pattern=r"^[\w\u4e00-\u9fa5-]+$")
     name: Optional[str] = Field(None, max_length=128)
     location_lat: Optional[float] = Field(None, ge=-90, le=90)
     location_lng: Optional[float] = Field(None, ge=-180, le=180)
@@ -50,7 +50,7 @@ class DeviceBase(BaseModel):
 
 
 class DeviceCreate(DeviceBase):
-    api_key: str = Field(..., min_length=32, max_length=128, description="设备 API Key (仅创建时返回)")
+    api_key: Optional[str] = Field(None, min_length=32, max_length=128, description="设备 API Key (可选; 缺省自动生成, 仅创建时返回)")
     device_fingerprint: Optional[str] = Field(None, max_length=128)
 
 
@@ -88,6 +88,13 @@ class DeviceWithDetails(DeviceResponse):
     confidence: Optional[float]
     inference_recorded_at: Optional[datetime]
     model_version: Optional[str]
+
+
+class DeviceSummary(BaseModel):
+    """首页聚合列表条目 (旧前端 get_name 接口适配)"""
+    device_name: str
+    temperature: Optional[float] = None
+    humidity: Optional[float] = None
 
 
 # ========== Sensor Data Schemas ==========

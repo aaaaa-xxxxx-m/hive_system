@@ -52,6 +52,9 @@ class Settings(BaseSettings):
     MINIO_SECRET_KEY: str
     MINIO_BUCKET: str = "audio"
     MINIO_SECURE: bool = False
+    # 对外预签名地址 (设备直传用); 为空时回退到 MINIO_ENDPOINT
+    MINIO_PUBLIC_ENDPOINT: str = ""
+    MINIO_PUBLIC_SECURE: bool = False
 
     # Auth / JWT
     JWT_SECRET: str

@@ -18,6 +18,14 @@ class MinIOClient:
             secret_key=settings.MINIO_SECRET_KEY,
             secure=settings.MINIO_SECURE,
         )
+        # 预签名 URL 必须按设备实际访问的地址签名 (公网 IP:端口)
+        self.public_endpoint = settings.MINIO_PUBLIC_ENDPOINT or settings.MINIO_ENDPOINT
+        self.public_client = Minio(
+            self.public_endpoint,
+            access_key=settings.MINIO_ACCESS_KEY,
+            secret_key=settings.MINIO_SECRET_KEY,
+            secure=settings.MINIO_PUBLIC_SECURE,
+        )
         self.bucket = settings.MINIO_BUCKET
         self._ensure_bucket()
 
@@ -143,10 +151,10 @@ class MinIOClient:
         expires_seconds: int = 3600,
         method: str = "GET",
     ) -> str:
-        """生成预签名 URL"""
+        """生成预签名 URL (按对外地址签名)"""
         from datetime import timedelta
         try:
-            return self.client.presigned_get_object(self.bucket, object_key, expires=timedelta(seconds=expires_seconds))
+            return self.public_client.presigned_get_object(self.bucket, object_key, expires=timedelta(seconds=expires_seconds))
         except S3Error as e:
             logger.error(f"Presigned URL failed: {e}")
             raise
@@ -156,10 +164,10 @@ class MinIOClient:
         object_key: str,
         expires_seconds: int = 3600,
     ) -> str:
-        """生成预签名上传 URL"""
+        """生成预签名上传 URL (按对外地址签名)"""
         from datetime import timedelta
         try:
-            return self.client.presigned_put_object(self.bucket, object_key, expires=timedelta(seconds=expires_seconds))
+            return self.public_client.presigned_put_object(self.bucket, object_key, expires=timedelta(seconds=expires_seconds))
         except S3Error as e:
             logger.error(f"Presigned PUT URL failed: {e}")
             raise

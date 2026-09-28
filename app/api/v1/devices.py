@@ -10,7 +10,7 @@ import secrets
 from app.core.database import get_db
 from app.models.models import Device, SensorData, InferenceResult, DeviceStatus, InferenceLabel
 from app.schemas.schemas import (
-    DeviceCreate, DeviceUpdate, DeviceResponse, DeviceWithDetails,
+    DeviceCreate, DeviceUpdate, DeviceResponse, DeviceWithDetails, DeviceSummary,
     SensorDataCreate, SensorDataResponse,
     InferenceResultCreate, InferenceResultResponse,
     PageParams, PageResponse, APIResponse, ErrorResponse,
@@ -115,6 +115,77 @@ async def list_devices(
         page=page,
         size=size,
     )
+
+
+# ========== 首页聚合列表 (旧前端 get_name 适配) ==========
+@router.get("/summary", response_model=List[DeviceSummary])
+async def devices_summary(db: AsyncSession = Depends(get_db)):
+    """返回所有设备名 + 最新温湿度。"""
+    latest = (
+        select(
+            SensorData.device_id.label("device_id"),
+            SensorData.temperature.label("temperature"),
+            SensorData.humidity.label("humidity"),
+            func.row_number().over(
+                partition_by=SensorData.device_id,
+                order_by=SensorData.recorded_at.desc(),
+            ).label("rn"),
+        ).subquery()
+    )
+    result = await db.execute(
+        select(Device.device_name, latest.c.temperature, latest.c.humidity)
+        .outerjoin(latest, (latest.c.device_id == Device.id) & (latest.c.rn == 1))
+        .order_by(Device.device_name)
+    )
+    return [
+        DeviceSummary(device_name=r.device_name, temperature=r.temperature, humidity=r.humidity)
+        for r in result.all()
+    ]
+
+
+async def _device_with_details(device: Device, db: AsyncSession) -> DeviceWithDetails:
+    sensor = (
+        await db.execute(
+            select(SensorData)
+            .where(SensorData.device_id == device.id)
+            .order_by(SensorData.recorded_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    infer = (
+        await db.execute(
+            select(InferenceResult)
+            .where(InferenceResult.device_id == device.id)
+            .order_by(InferenceResult.recorded_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
+    data = DeviceResponse.model_validate(device).model_dump()
+    data.update(
+        temperature=sensor.temperature if sensor else None,
+        humidity=sensor.humidity if sensor else None,
+        battery_voltage=sensor.battery_voltage if sensor else None,
+        signal_strength=sensor.signal_strength if sensor else None,
+        sensor_recorded_at=sensor.recorded_at if sensor else None,
+        probability_no_queen=infer.probability_no_queen if infer else None,
+        probability_normal=infer.probability_normal if infer else None,
+        inference_label=infer.label if infer else None,
+        confidence=infer.confidence if infer else None,
+        inference_recorded_at=infer.recorded_at if infer else None,
+        model_version=infer.model_version if infer else None,
+    )
+    return DeviceWithDetails(**data)
+
+
+# ========== 按设备名查询详情 (旧前端 get_data 适配) ==========
+@router.get("/by-name/{device_name}", response_model=DeviceWithDetails)
+async def get_device_by_name(device_name: str, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Device).where(Device.device_name == device_name))
+    device = result.scalar_one_or_none()
+    if not device:
+        raise HTTPException(status_code=404, detail="Device not found")
+    return await _device_with_details(device, db)
 
 
 # ========== 设备详情 (含最新传感器/推理数据) ==========
