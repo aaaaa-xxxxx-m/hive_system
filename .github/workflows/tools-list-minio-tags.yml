@@ -1,0 +1,17 @@
+name: tools-list-minio-tags
+
+on:
+  workflow_dispatch:
+
+jobs:
+  list:
+    runs-on: ubuntu-latest
+    steps:
+      - name: List MinIO available tags
+        run: |
+          set -e
+          TOKEN=$(curl -fsS "https://auth.docker.io/token?service=registry.docker.io&scope=repository:minio/minio:pull" | jq -r .token)
+          echo "----- all tags (tail 30) -----"
+          curl -fsS -H "Authorization: Bearer $TOKEN" "https://registry-1.docker.io/v2/minio/minio/tags/list" | jq -r '.tags[]' | sort | tail -30
+          echo "----- release tags containing 2024/2025 (tail 15) -----"
+          curl -fsS -H "Authorization: Bearer $TOKEN" "https://registry-1.docker.io/v2/minio/minio/tags/list" | jq -r '.tags[]' | grep -E 'RELEASE.202[45]' | sort | tail -15
