@@ -13,7 +13,7 @@ alembic==1.13.1
 # === Redis / Celery ===
 redis==5.0.1
 celery[redis]==5.3.6
-redbeat==2.0.0
+celery-redbeat==2.0.0
 
 # === MinIO / S3 ===
 minio==7.2.5
@@ -22,7 +22,7 @@ minio==7.2.5
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
 python-multipart==0.0.6
-cryptography==41.0.8
+cryptography==41.0.7
 
 # === ML / Model ===
 scikit-learn==1.3.2
