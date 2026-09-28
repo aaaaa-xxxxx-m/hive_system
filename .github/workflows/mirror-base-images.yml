@@ -1,0 +1,55 @@
+name: Mirror Base Images to GHCR
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 2 * * 0'  # Weekly on Sunday 02:00 UTC
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  NAMESPACE: aaaaa-xxxxx-m/hive_system
+
+jobs:
+  mirror-images:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Core infrastructure
+          - src: nginx:1.25-alpine
+            dst: nginx:1.25-alpine
+          - src: mysql:8.0
+            dst: mysql:8.0
+          - src: redis:7-alpine
+            dst: redis:7-alpine
+          # Monitoring stack
+          - src: prom/prometheus:v2.47.0
+            dst: prometheus:v2.47.0
+          - src: grafana/grafana:10.1.0
+            dst: grafana:10.1.0
+          - src: grafana/loki:2.9.0
+            dst: loki:2.9.0
+          - src: grafana/promtail:2.9.0
+            dst: promtail:2.9.0
+
+    steps:
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_PAT }}
+
+      - name: Pull ${{ matrix.src }}
+        run: docker pull --platform linux/amd64 docker.io/${{ matrix.src }}
+
+      - name: Tag for GHCR
+        run: docker tag docker.io/${{ matrix.src }} ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/${{ matrix.dst }}
+
+      - name: Push ${{ matrix.dst }} to GHCR
+        run: docker push ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/${{ matrix.dst }}

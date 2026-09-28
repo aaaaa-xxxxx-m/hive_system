@@ -1,0 +1,39 @@
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+    jsonData:
+      timeInterval: "15s"
+      queryTimeout: "60s"
+      httpMethod: "POST"
+
+  - name: Loki
+    type: loki
+    access: proxy
+    url: http://loki:3100
+    editable: false
+    jsonData:
+      maxLines: 1000
+      derivedFields:
+        - name: trace_id
+          matcherRegex: '"trace_id":"([^"]+)"'
+          url: '${__value.raw}'
+          datasourceUid: tempo
+
+  - name: MySQL
+    type: mysql
+    access: proxy
+    url: mysql:3306
+    database: bee_db
+    user: bee_user
+    secureJsonData:
+      password: ${MYSQL_PASSWORD}
+    jsonData:
+      maxOpenConns: 10
+      maxIdleConns: 2
+      connMaxLifetime: 14400

@@ -1,0 +1,211 @@
+groups:
+  - name: bee-monitor.rules
+    interval: 30s
+    rules:
+      # ========== 实例级告警 ==========
+      - alert: InstanceDown
+        expr: up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "实例 {{ $labels.instance }} ({{ $labels.job }}) 掉线"
+          description: "{{ $labels.instance }} 已超过 1 分钟无响应"
+
+      # ========== 设备级告警 ==========
+      - alert: DeviceOffline
+        expr: |
+          (
+            time() - bee_device_last_seen_timestamp
+          ) > 300
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "设备 {{ $labels.device_name }} 离线"
+          description: "设备 {{ $labels.device_name }} 超过 5 分钟无心跳上报"
+
+      - alert: DeviceBatteryLow
+        expr: bee_device_battery_voltage < 3.3
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "设备 {{ $labels.device_name }} 电量低"
+          description: "电池电压 {{ $value }}V, 建议更换电池"
+
+      - alert: DeviceSignalWeak
+        expr: bee_device_signal_strength < -90
+        for: 10m
+        labels:
+          severity: info
+        annotations:
+          summary: "设备 {{ $labels.device_name }} 信号弱"
+          description: "信号强度 {{ $value }} dBm, 可能影响数据上传"
+
+      # ========== 推理异常告警 ==========
+      - alert: InferenceAnomalyHighNoQueen
+        expr: |
+          sum by (device_name) (rate(bee_inference_no_queen_total[1h])) 
+          / 
+          sum by (device_name) (rate(bee_inference_total[1h])) > 0.8
+        for: 30m
+        labels:
+          severity: critical
+        annotations:
+          summary: "设备 {{ $labels.device_name }} 连续高概率无蜂王"
+          description: "过去 1 小时无蜂王概率超过 80%, 请现场核查"
+
+      - alert: InferenceConfidenceLow
+        expr: |
+          avg by (device_name) (bee_inference_confidence) < 0.5
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "设备 {{ $labels.device_name }} 推理置信度低"
+          description: "平均置信度 {{ $value }}, 模型可能不适配当前环境"
+
+      - alert: InferenceLatencyHigh
+        expr: |
+          histogram_quantile(0.95, rate(bee_inference_duration_seconds_bucket[5m])) > 5
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "推理延迟过高 (P95 > 5s)"
+          description: "P95 延迟 {{ $value }}s, 可能需要扩容或优化模型"
+
+      # ========== 基础设施告警 ==========
+      - alert: DiskSpaceCritical
+        expr: |
+          (node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) * 100 < 10
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "磁盘空间不足 (< 10%)"
+          description: "根分区可用空间仅 {{ $value }}%"
+
+      - alert: DiskSpaceWarning
+        expr: |
+          (node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) * 100 < 20
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "磁盘空间预警 (< 20%)"
+          description: "根分区可用空间 {{ $value }}%"
+
+      - alert: MemoryUsageHigh
+        expr: |
+          (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > 85
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "内存使用率过高 (> 85%)"
+          description: "当前内存使用率 {{ $value }}%"
+
+      - alert: CPUUsageHigh
+        expr: |
+          100 - (avg by (instance) (irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 80
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "CPU 使用率持续过高 (> 80%)"
+          description: "实例 {{ $labels.instance }} CPU 使用率 {{ $value }}%"
+
+      - alert: MySQLConnectionsHigh
+        expr: |
+          mysql_global_status_threads_connected / mysql_global_variables_max_connections * 100 > 80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "MySQL 连接数过高 (> 80%)"
+          description: "当前连接数占比 {{ $value }}%"
+
+      - alert: MySQLSlowQueries
+        expr: |
+          rate(mysql_global_status_slow_queries[5m]) > 10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "MySQL 慢查询过多"
+          description: "每秒慢查询数 {{ $value }}"
+
+      - alert: RedisMemoryHigh
+        expr: |
+          redis_memory_used_bytes / redis_memory_max_bytes * 100 > 85
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Redis 内存使用率过高 (> 85%)"
+          description: "当前使用率 {{ $value }}%"
+
+      - alert: MinIODiskSpaceLow
+        expr: |
+          minio_cluster_capacity_usable_free_bytes / minio_cluster_capacity_total_bytes * 100 < 15
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "MinIO 可用空间不足 (< 15%)"
+          description: "集群可用空间仅 {{ $value }}%"
+
+      # ========== 业务告警 ==========
+      - alert: TrainingJobFailed
+        expr: |
+          increase(bee_training_job_failed_total[10m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "模型训练任务失败"
+          description: "任务 {{ $labels.job_id }} 失败: {{ $labels.error }}"
+
+      - alert: TrainingJobStuck
+        expr: |
+          time() - bee_training_job_started_timestamp > 3600
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "训练任务疑似卡死 (> 1h)"
+          description: "任务 {{ $labels.job_id }} 运行超过 1 小时未完成"
+
+      - alert: APIErrorRateHigh
+        expr: |
+          sum(rate(http_requests_total{status=~"5.."}[5m])) 
+          / 
+          sum(rate(http_requests_total[5m])) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "API 5xx 错误率超过 5%"
+          description: "当前错误率 {{ $value | humanizePercentage }}"
+
+      - alert: APILatencyP99High
+        expr: |
+          histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket[5m])) by (le)) > 2
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "API P99 延迟超过 2s"
+          description: "P99 延迟 {{ $value }}s"
+
+      - alert: CertExpiringSoon
+        expr: |
+          ssl_cert_expiry_timestamp - time() < 2592000
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "SSL 证书即将过期 (< 30 天)"
+          description: "证书 {{ $labels.domain }} 将在 {{ $value | humanizeDuration }} 后过期"
