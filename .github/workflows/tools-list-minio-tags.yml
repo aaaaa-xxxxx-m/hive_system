@@ -7,16 +7,18 @@ jobs:
   list:
     runs-on: ubuntu-latest
     steps:
-      - name: Probe MinIO image sources (real pulls)
+      - name: Probe MinIO + S3-compatible images
         run: |
-          for ref in \
-            nginx:1.25-alpine \
-            minio/minio:latest \
-            minio/minio:RELEASE.2025-07-23T15-54-02Z \
-            minio/minio:RELEASE.2025-04-22T22-12-26Z \
-            minio/minio:RELEASE.2025-03-12T18-04-18Z \
-            minio/minio:RELEASE.2024-12-18T13-15-44Z \
-            quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z \
-            ghcr.io/minio/minio:latest ; do
-            if timeout 150 docker pull -q "$ref" >/dev/null 2>&1; then echo "PULL_OK  $ref"; else echo "PULL_NO  $ref"; fi
-          done
+          probe() {
+            if timeout 200 docker pull -q "$1" >/tmp/p.log 2>&1; then
+              echo "PULL_OK  $1"
+            else
+              echo "PULL_NO  $1 :: $(tail -1 /tmp/p.log | cut -c1-160)"
+            fi
+          }
+          probe minio/minio:latest
+          probe quay.io/minio/minio:latest
+          probe seaweedfs/seaweedfs:latest
+          probe chrislusf/seaweedfs:latest
+          probe zenko/cloudserver:latest
+          probe opendatacube/minio:latest
