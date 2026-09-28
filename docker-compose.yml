@@ -195,7 +195,7 @@ services:
 
   # ========== MinIO 对象存储 ==========
   minio:
-    image: registry.aliyuncs.com/minio/minio:latest
+    image: ghcr.io/aaaaa-xxxxx-m/hive_system/minio:latest
     container_name: bee-minio
     restart: unless-stopped
     command: server /data --console-address ":9001"
