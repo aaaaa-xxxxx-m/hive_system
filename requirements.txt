@@ -7,7 +7,7 @@ pydantic-extra-types==2.4.0
 
 # === Database ===
 sqlalchemy[asyncio]==2.0.25
-asyncmy==0.2.5
+asyncmy==0.2.15
 alembic==1.13.1
 
 # === Redis / Celery ===
