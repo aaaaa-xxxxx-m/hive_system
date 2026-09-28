@@ -13,7 +13,7 @@ alembic==1.13.1
 # === Redis / Celery ===
 redis==5.0.1
 celery[redis]==5.3.6
-celery-redbeat==2.0.0
+celery-redbeat==2.4.2
 
 # === MinIO / S3 ===
 minio==7.2.5

@@ -109,6 +109,8 @@ services:
         condition: service_healthy
     networks:
       - bee-net
+    healthcheck:
+      disable: true
     deploy:
       resources:
         limits:
@@ -141,8 +143,12 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+      minio:
+        condition: service_healthy
     networks:
       - bee-net
+    healthcheck:
+      disable: true
     deploy:
       resources:
         limits:
@@ -241,7 +247,7 @@ services:
     networks:
       - bee-net
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      test: ["CMD", "mc", "ready", "local"]
       interval: 30s
       timeout: 10s
       retries: 5
