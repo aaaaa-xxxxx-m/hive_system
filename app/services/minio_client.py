@@ -17,6 +17,7 @@ class MinIOClient:
             access_key=settings.MINIO_ACCESS_KEY,
             secret_key=settings.MINIO_SECRET_KEY,
             secure=settings.MINIO_SECURE,
+            region=settings.MINIO_REGION,
         )
         # 预签名 URL 必须按设备实际访问的地址签名 (公网 IP:端口)
         self.public_endpoint = settings.MINIO_PUBLIC_ENDPOINT or settings.MINIO_ENDPOINT
@@ -25,6 +26,7 @@ class MinIOClient:
             access_key=settings.MINIO_ACCESS_KEY,
             secret_key=settings.MINIO_SECRET_KEY,
             secure=settings.MINIO_PUBLIC_SECURE,
+            region=settings.MINIO_REGION,
         )
         self.bucket = settings.MINIO_BUCKET
         self._ensure_bucket()

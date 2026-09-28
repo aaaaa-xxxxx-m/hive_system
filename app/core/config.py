@@ -55,6 +55,9 @@ class Settings(BaseSettings):
     # 对外预签名地址 (设备直传用); 为空时回退到 MINIO_ENDPOINT
     MINIO_PUBLIC_ENDPOINT: str = ""
     MINIO_PUBLIC_SECURE: bool = False
+    # 显式指定区域, 避免 SDK 发起 GetBucketLocation 网络探测
+    # (预签名时若探测公网地址会 hairpin 阻塞)
+    MINIO_REGION: str = "us-east-1"
 
     # Auth / JWT
     JWT_SECRET: str
