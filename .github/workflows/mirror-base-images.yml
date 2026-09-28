@@ -27,6 +27,8 @@ jobs:
             dst: mysql:8.0
           - src: redis:7-alpine
             dst: redis:7-alpine
+          - src: minio/minio:latest
+            dst: minio:latest
           # Monitoring stack
           - src: prom/prometheus:v2.47.0
             dst: prometheus:v2.47.0
