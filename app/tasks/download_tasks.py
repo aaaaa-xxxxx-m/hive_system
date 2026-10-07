@@ -7,17 +7,20 @@ from datetime import datetime
 from celery import shared_task
 from celery.utils.log import get_task_logger
 from sqlalchemy import select, update
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.pool import NullPool
 
-from app.core.database import async_session_maker
+from app.core.config import get_settings
 from app.models.models import InferenceResult, DownloadJob, DownloadJobStatus
 from app.services.minio_client import get_minio_client
 
 logger = get_task_logger(__name__)
+settings = get_settings()
 minio = get_minio_client()
 
 
-async def _save(job_id: str, **values):
-    async with async_session_maker() as db:
+async def _save(Session, job_id: str, **values):
+    async with Session() as db:
         await db.execute(update(DownloadJob).where(DownloadJob.job_id == job_id).values(**values))
         await db.commit()
 
@@ -27,12 +30,15 @@ def _label_value(label) -> str:
 
 
 async def _export(job_id: str):
-    """全部 DB / IO 都在同一事件循环内完成 (避免跨 loop 的 Future 错误)。"""
+    # Celery 一次性任务: 专用 NullPool 引擎, 在本次事件循环内创建/销毁,
+    # 避免复用绑定到其它 loop 的连接池。
+    engine = create_async_engine(settings.DATABASE_URL, poolclass=NullPool)
+    Session = async_sessionmaker(engine, expire_on_commit=False)
     try:
-        await _save(job_id, status=DownloadJobStatus.RUNNING, progress=5,
+        await _save(Session, job_id, status=DownloadJobStatus.RUNNING, progress=5,
                     started_at=datetime.utcnow())
 
-        async with async_session_maker() as db:
+        async with Session() as db:
             job = (
                 await db.execute(select(DownloadJob).where(DownloadJob.job_id == job_id))
             ).scalar_one_or_none()
@@ -77,7 +83,7 @@ async def _export(job_id: str):
                     r.model_version, r.audio_object_key,
                 ])
 
-        await _save(job_id, progress=60)
+        await _save(Session, job_id, progress=60)
 
         outer = io.BytesIO()
         with zipfile.ZipFile(outer, "w", zipfile.ZIP_DEFLATED) as bundle:
@@ -87,7 +93,7 @@ async def _export(job_id: str):
         object_key = f"exports/{device_name}/{job_id}.zip"
         minio.upload_file(object_key, outer.getvalue(), content_type="application/zip")
 
-        await _save(job_id, status=DownloadJobStatus.COMPLETED, progress=100,
+        await _save(Session, job_id, status=DownloadJobStatus.COMPLETED, progress=100,
                     object_key=object_key, completed_at=datetime.utcnow())
         logger.info(f"Export done: {object_key} records={len(rows)} missing_audio={missing}")
         return {"job_id": job_id, "object_key": object_key,
@@ -96,10 +102,12 @@ async def _export(job_id: str):
     except Exception as e:  # noqa: BLE001
         logger.exception("Export failed")
         try:
-            await _save(job_id, status=DownloadJobStatus.FAILED, error_message=str(e))
+            await _save(Session, job_id, status=DownloadJobStatus.FAILED, error_message=str(e))
         except Exception:
             pass
         raise
+    finally:
+        await engine.dispose()
 
 
 @shared_task(bind=True, max_retries=0)
