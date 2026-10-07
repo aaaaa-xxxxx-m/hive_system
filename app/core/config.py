@@ -65,6 +65,10 @@ class Settings(BaseSettings):
     JWT_EXPIRE_MINUTES: int = 60 * 24 * 7  # 7 days
     API_KEY_SALT: str
 
+    # 初始管理员 (accounts 表为空时自动创建)
+    BOOTSTRAP_ADMIN_USER: str = "admin"
+    BOOTSTRAP_ADMIN_PASSWORD: str = "bee@admin"
+
     # Model Signing (Ed25519)
     MODEL_SIGNING_PRIVATE_KEY_B64: str = Field(alias="MODEL_SIGNING_PRIVATE_KEY")
     MODEL_SIGNING_PUBLIC_KEY_B64: str = Field(alias="MODEL_SIGNING_PUBLIC_KEY")

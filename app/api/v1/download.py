@@ -28,6 +28,7 @@ async def start_download(req: DownloadJobCreate, db: AsyncSession = Depends(get_
     job = DownloadJob(
         job_id=str(uuid.uuid4()),
         device_name=device.device_name,
+        username=req.username,
         data_limit=req.limit,
         status=DownloadJobStatus.PENDING,
         progress=0,

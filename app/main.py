@@ -7,9 +7,13 @@ import structlog
 import time
 import uuid
 
+from sqlalchemy import func, select
+
 from app.core.config import get_settings
-from app.core.database import init_db, close_db, engine
-from app.api.v1 import devices, models, health, download
+from app.core.database import init_db, close_db, engine, async_session_maker
+from app.core.security import hash_password
+from app.models.models import Account, AccountRole
+from app.api.v1 import devices, models, health, download, auth, admin
 from app.tasks.celery_app import celery_app
 
 settings = get_settings()
@@ -50,11 +54,29 @@ REQUEST_LATENCY = Histogram(
 ACTIVE_REQUESTS = Gauge("http_requests_active", "Active HTTP requests", ["method", "endpoint"])
 
 
+async def ensure_bootstrap_admin() -> None:
+    """accounts 为空时，按环境变量创建初始管理员。"""
+    async with async_session_maker() as db:
+        count = (await db.execute(select(func.count(Account.id)))).scalar()
+        if not count:
+            db.add(
+                Account(
+                    username=settings.BOOTSTRAP_ADMIN_USER,
+                    password_hash=hash_password(settings.BOOTSTRAP_ADMIN_PASSWORD),
+                    role=AccountRole.ADMIN,
+                    enabled=True,
+                )
+            )
+            await db.commit()
+            logger.info("Bootstrap admin created", username=settings.BOOTSTRAP_ADMIN_USER)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # 启动
     logger.info("Starting Bee Monitor API", version=settings.APP_VERSION)
     await init_db()
+    await ensure_bootstrap_admin()
     yield
     # 关闭
     logger.info("Shutting down Bee Monitor API")
@@ -155,6 +177,8 @@ app.include_router(health.router, prefix="")
 app.include_router(devices.router, prefix="/api/v1")
 app.include_router(models.router, prefix="/api/v1")
 app.include_router(download.router, prefix="/api/v1")
+app.include_router(auth.router, prefix="/api/v1")
+app.include_router(admin.router, prefix="/api/v1")
 
 
 # Prometheus metrics endpoint (单独路由，不经过中间件记录)

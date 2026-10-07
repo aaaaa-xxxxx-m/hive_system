@@ -72,6 +72,11 @@ class DownloadJobStatus(str, enum.Enum):
     FAILED = "failed"
 
 
+class AccountRole(str, enum.Enum):
+    USER = "user"
+    ADMIN = "admin"
+
+
 class RawFeatureLabel(str, enum.Enum):
     NO_QUEEN = "no_queen"
     NORMAL = "normal"
@@ -217,6 +222,7 @@ class DownloadJob(Base):
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     job_id: Mapped[str] = mapped_column(String(36), unique=True, nullable=False)
     device_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    username: Mapped[Optional[str]] = mapped_column(String(64))
     data_limit: Mapped[int] = mapped_column(Integer, nullable=False)
     status: Mapped[DownloadJobStatus] = mapped_column(
         _enum(DownloadJobStatus, "download_job_status"),
@@ -231,6 +237,25 @@ class DownloadJob(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), nullable=False
     )
+
+
+# ============================================================
+# 登录账号 (普通用户 / 管理员)
+# ============================================================
+class Account(Base):
+    __tablename__ = "accounts"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    username: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    role: Mapped[AccountRole] = mapped_column(
+        _enum(AccountRole, "account_role"), default=AccountRole.USER, nullable=False
+    )
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), nullable=False
+    )
+    last_login_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
 
 
 # ============================================================
@@ -287,12 +312,14 @@ __all__ = [
     "ModelStatus",
     "TrainingJobStatus",
     "DownloadJobStatus",
+    "AccountRole",
     "RawFeatureLabel",
     "Device",
     "InferenceResult",
     "ModelVersion",
     "TrainingJob",
     "DownloadJob",
+    "Account",
     "RawFeature",
     "AuditLog",
 ]

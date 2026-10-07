@@ -291,6 +291,7 @@ class PageResponse(BaseModel):
 class DownloadJobCreate(BaseModel):
     device_name: str = Field(..., min_length=1, max_length=64)
     limit: int = Field(..., ge=1, le=10000, description="打包最近 N 条音频记录")
+    username: Optional[str] = Field(None, max_length=64, description="触发账号 (主界面接入后由登录态提供)")
 
 
 class DownloadJobResponse(BaseModel):
@@ -299,6 +300,60 @@ class DownloadJobResponse(BaseModel):
     progress: int
     download_url: Optional[str] = None
     error: Optional[str] = None
+
+
+# ========== Auth / Account Schemas ==========
+class AccountRole(str, Enum):
+    USER = "user"
+    ADMIN = "admin"
+
+
+class LoginRequest(BaseModel):
+    username: str = Field(..., min_length=1, max_length=64)
+    password: str = Field(..., min_length=1, max_length=128)
+
+
+class TokenResponse(BaseModel):
+    token: str
+    username: str
+    role: AccountRole
+
+
+class AccountCreate(BaseModel):
+    username: str = Field(..., min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_.-]+$")
+    password: str = Field(..., min_length=4, max_length=128)
+    role: AccountRole = AccountRole.USER
+
+
+class AccountResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    username: str
+    role: AccountRole
+    enabled: bool
+    created_at: datetime
+    last_login_at: Optional[datetime]
+
+
+class DownloadJobAdminItem(BaseModel):
+    job_id: str
+    username: Optional[str] = None
+    device_name: str
+    data_limit: int
+    status: DownloadJobStatus
+    progress: int
+    object_key: Optional[str] = None
+    error: Optional[str] = None
+    created_at: datetime
+    completed_at: Optional[datetime] = None
+
+
+class DownloadStats(BaseModel):
+    total_jobs: int
+    completed_jobs: int
+    failed_jobs: int
+    by_account: List[Dict[str, Any]]
 
 
 # ========== Common Response ==========

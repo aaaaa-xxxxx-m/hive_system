@@ -119,6 +119,7 @@ CREATE TABLE IF NOT EXISTS download_jobs (
     id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '主键',
     job_id CHAR(36) NOT NULL COMMENT '任务 UUID',
     device_name VARCHAR(64) NOT NULL COMMENT '设备名',
+    username VARCHAR(64) COMMENT '触发账号 (主界面接入后写入)',
     data_limit INT UNSIGNED NOT NULL COMMENT '打包最近 N 条记录',
     status ENUM('pending', 'running', 'completed', 'failed') NOT NULL DEFAULT 'pending' COMMENT '任务状态',
     progress INT UNSIGNED NOT NULL DEFAULT 0 COMMENT '进度百分比',
@@ -131,6 +132,19 @@ CREATE TABLE IF NOT EXISTS download_jobs (
     UNIQUE KEY uk_job_id (job_id),
     KEY idx_status (status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='数据下载任务记录';
+
+-- ========== 登录账号表 (普通用户 / 管理员) ==========
+CREATE TABLE IF NOT EXISTS accounts (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '主键',
+    username VARCHAR(64) NOT NULL COMMENT '登录名',
+    password_hash VARCHAR(255) NOT NULL COMMENT 'bcrypt 密码哈希',
+    role ENUM('user', 'admin') NOT NULL DEFAULT 'user' COMMENT '角色',
+    enabled BOOLEAN NOT NULL DEFAULT TRUE COMMENT '是否启用',
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    last_login_at TIMESTAMP NULL COMMENT '最后登录时间',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_username (username)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='登录账号';
 
 -- ========== 特征数据表 (原始特征, 仅保留最近 30 天) ==========
 CREATE TABLE IF NOT EXISTS raw_features (
