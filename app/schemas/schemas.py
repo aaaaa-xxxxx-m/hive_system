@@ -102,6 +102,7 @@ class DeviceSummary(BaseModel):
     device_name: str
     temperature: Optional[float] = None
     humidity: Optional[float] = None
+    recorded_at: Optional[datetime] = None
 
 
 class DeviceDownloadCatalog(BaseModel):

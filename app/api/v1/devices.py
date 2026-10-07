@@ -122,6 +122,7 @@ async def devices_summary(db: AsyncSession = Depends(get_db)):
             InferenceResult.device_id.label("device_id"),
             InferenceResult.temperature.label("temperature"),
             InferenceResult.humidity.label("humidity"),
+            InferenceResult.recorded_at.label("recorded_at"),
             func.row_number().over(
                 partition_by=InferenceResult.device_id,
                 order_by=InferenceResult.recorded_at.desc(),
@@ -129,12 +130,17 @@ async def devices_summary(db: AsyncSession = Depends(get_db)):
         ).subquery()
     )
     result = await db.execute(
-        select(Device.device_name, latest.c.temperature, latest.c.humidity)
+        select(Device.device_name, latest.c.temperature, latest.c.humidity, latest.c.recorded_at)
         .outerjoin(latest, (latest.c.device_id == Device.id) & (latest.c.rn == 1))
         .order_by(Device.device_name)
     )
     return [
-        DeviceSummary(device_name=r.device_name, temperature=r.temperature, humidity=r.humidity)
+        DeviceSummary(
+            device_name=r.device_name,
+            temperature=r.temperature,
+            humidity=r.humidity,
+            recorded_at=r.recorded_at,
+        )
         for r in result.all()
     ]
 
