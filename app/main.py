@@ -9,7 +9,7 @@ import uuid
 
 from app.core.config import get_settings
 from app.core.database import init_db, close_db, engine
-from app.api.v1 import devices, models, health
+from app.api.v1 import devices, models, health, download
 from app.tasks.celery_app import celery_app
 
 settings = get_settings()
@@ -154,6 +154,7 @@ async def global_exception_handler(request: Request, exc: Exception):
 app.include_router(health.router, prefix="")
 app.include_router(devices.router, prefix="/api/v1")
 app.include_router(models.router, prefix="/api/v1")
+app.include_router(download.router, prefix="/api/v1")
 
 
 # Prometheus metrics endpoint (单独路由，不经过中间件记录)

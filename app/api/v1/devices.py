@@ -1,20 +1,18 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Header
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, update, delete
-from sqlalchemy.orm import selectinload
+from sqlalchemy import select, func, delete
 from typing import List, Optional
 from datetime import datetime
 import hashlib
 import secrets
 
 from app.core.database import get_db
-from app.models.models import Device, SensorData, InferenceResult, DeviceStatus, InferenceLabel
+from app.models.models import Device, InferenceResult, DeviceStatus, InferenceLabel
 from app.schemas.schemas import (
     DeviceCreate, DeviceUpdate, DeviceResponse, DeviceWithDetails, DeviceSummary,
     DeviceDownloadCatalog,
-    SensorDataCreate, SensorDataResponse,
-    InferenceResultCreate, InferenceResultResponse,
-    PageParams, PageResponse, APIResponse, ErrorResponse,
+    InferenceResultCreate, InferenceResultResponse, DeviceRecordResponse,
+    PageResponse, APIResponse,
 )
 from app.services.minio_client import get_minio_client, MinIOClient
 
@@ -57,7 +55,6 @@ async def verify_device_auth(
 @router.post("", response_model=APIResponse, status_code=status.HTTP_201_CREATED)
 async def register_device(device_in: DeviceCreate, db: AsyncSession = Depends(get_db)):
     """注册新设备 (管理员接口)"""
-    # 检查设备名是否存在
     existing = await db.execute(select(Device).where(Device.device_name == device_in.device_name))
     if existing.scalar_one_or_none():
         raise HTTPException(
@@ -65,7 +62,6 @@ async def register_device(device_in: DeviceCreate, db: AsyncSession = Depends(ge
             detail=f"Device {device_in.device_name} already exists",
         )
 
-    # 生成 API Key (如果未提供)
     api_key = device_in.api_key if hasattr(device_in, 'api_key') and device_in.api_key else generate_api_key()
     api_key_hash = hash_api_key(api_key)
 
@@ -83,7 +79,6 @@ async def register_device(device_in: DeviceCreate, db: AsyncSession = Depends(ge
     await db.commit()
     await db.refresh(device)
 
-    # 仅创建时返回明文 API Key
     response_data = DeviceResponse.model_validate(device).model_dump()
     response_data["api_key"] = api_key
 
@@ -118,18 +113,18 @@ async def list_devices(
     )
 
 
-# ========== 首页聚合列表 (旧前端 get_name 适配) ==========
+# ========== 首页聚合列表 (每设备最新一条记录) ==========
 @router.get("/summary", response_model=List[DeviceSummary])
 async def devices_summary(db: AsyncSession = Depends(get_db)):
-    """返回所有设备名 + 最新温湿度。"""
+    """返回所有设备名 + 最新温湿度 (来自合并后的 inference_results)。"""
     latest = (
         select(
-            SensorData.device_id.label("device_id"),
-            SensorData.temperature.label("temperature"),
-            SensorData.humidity.label("humidity"),
+            InferenceResult.device_id.label("device_id"),
+            InferenceResult.temperature.label("temperature"),
+            InferenceResult.humidity.label("humidity"),
             func.row_number().over(
-                partition_by=SensorData.device_id,
-                order_by=SensorData.recorded_at.desc(),
+                partition_by=InferenceResult.device_id,
+                order_by=InferenceResult.recorded_at.desc(),
             ).label("rn"),
         ).subquery()
     )
@@ -144,50 +139,29 @@ async def devices_summary(db: AsyncSession = Depends(get_db)):
     ]
 
 
-# ========== 数据下载设备目录 (每设备数据量) ==========
+# ========== 数据下载设备目录 (每设备记录数) ==========
 @router.get("/download-catalog", response_model=List[DeviceDownloadCatalog])
 async def device_download_catalog(db: AsyncSession = Depends(get_db)):
-    """返回每个设备名 + 传感器 / 推理数据量计数。"""
-    sensor_counts = (
-        select(SensorData.device_id.label("device_id"), func.count().label("cnt"))
-        .group_by(SensorData.device_id)
-        .subquery()
-    )
-    inference_counts = (
+    """返回每个设备名 + 可用记录条数。"""
+    counts = (
         select(InferenceResult.device_id.label("device_id"), func.count().label("cnt"))
         .group_by(InferenceResult.device_id)
         .subquery()
     )
     result = await db.execute(
-        select(
-            Device.device_name,
-            func.coalesce(sensor_counts.c.cnt, 0).label("sensor_count"),
-            func.coalesce(inference_counts.c.cnt, 0).label("inference_count"),
-        )
-        .outerjoin(sensor_counts, sensor_counts.c.device_id == Device.id)
-        .outerjoin(inference_counts, inference_counts.c.device_id == Device.id)
+        select(Device.device_name, func.coalesce(counts.c.cnt, 0).label("record_count"))
+        .outerjoin(counts, counts.c.device_id == Device.id)
         .order_by(Device.device_name)
     )
     return [
-        DeviceDownloadCatalog(
-            device_name=r.device_name,
-            sensor_count=int(r.sensor_count or 0),
-            inference_count=int(r.inference_count or 0),
-        )
+        DeviceDownloadCatalog(device_name=r.device_name, record_count=int(r.record_count or 0))
         for r in result.all()
     ]
 
 
 async def _device_with_details(device: Device, db: AsyncSession) -> DeviceWithDetails:
-    sensor = (
-        await db.execute(
-            select(SensorData)
-            .where(SensorData.device_id == device.id)
-            .order_by(SensorData.recorded_at.desc())
-            .limit(1)
-        )
-    ).scalar_one_or_none()
-    infer = (
+    # 方案 C: 环境指标与推理同在一行, 取该设备最新一条记录
+    record = (
         await db.execute(
             select(InferenceResult)
             .where(InferenceResult.device_id == device.id)
@@ -198,22 +172,22 @@ async def _device_with_details(device: Device, db: AsyncSession) -> DeviceWithDe
 
     data = DeviceResponse.model_validate(device).model_dump()
     data.update(
-        temperature=sensor.temperature if sensor else None,
-        humidity=sensor.humidity if sensor else None,
-        battery_voltage=sensor.battery_voltage if sensor else None,
-        signal_strength=sensor.signal_strength if sensor else None,
-        sensor_recorded_at=sensor.recorded_at if sensor else None,
-        probability_no_queen=infer.probability_no_queen if infer else None,
-        probability_normal=infer.probability_normal if infer else None,
-        inference_label=infer.label if infer else None,
-        confidence=infer.confidence if infer else None,
-        inference_recorded_at=infer.recorded_at if infer else None,
-        model_version=infer.model_version if infer else None,
+        temperature=record.temperature if record else None,
+        humidity=record.humidity if record else None,
+        battery_voltage=record.battery_voltage if record else None,
+        signal_strength=record.signal_strength if record else None,
+        sensor_recorded_at=record.recorded_at if record else None,
+        probability_no_queen=record.probability_no_queen if record else None,
+        probability_normal=record.probability_normal if record else None,
+        inference_label=record.label if record else None,
+        confidence=record.confidence if record else None,
+        inference_recorded_at=record.recorded_at if record else None,
+        model_version=record.model_version if record else None,
     )
     return DeviceWithDetails(**data)
 
 
-# ========== 按设备名查询详情 (旧前端 get_data 适配) ==========
+# ========== 按设备名查询详情 ==========
 @router.get("/by-name/{device_name}", response_model=DeviceWithDetails)
 async def get_device_by_name(device_name: str, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Device).where(Device.device_name == device_name))
@@ -223,19 +197,14 @@ async def get_device_by_name(device_name: str, db: AsyncSession = Depends(get_db
     return await _device_with_details(device, db)
 
 
-# ========== 设备详情 (含最新传感器/推理数据) ==========
+# ========== 设备详情 (含最新记录) ==========
 @router.get("/{device_id}", response_model=DeviceWithDetails)
 async def get_device(device_id: int, db: AsyncSession = Depends(get_db)):
-    # 使用视图或手动 JOIN
-    from sqlalchemy import text
-    result = await db.execute(
-        text("SELECT * FROM v_device_latest WHERE id = :id"),
-        {"id": device_id}
-    )
-    row = result.mappings().first()
-    if not row:
+    result = await db.execute(select(Device).where(Device.id == device_id))
+    device = result.scalar_one_or_none()
+    if not device:
         raise HTTPException(status_code=404, detail="Device not found")
-    return DeviceWithDetails(**row)
+    return await _device_with_details(device, db)
 
 
 # ========== 更新设备 ==========
@@ -268,71 +237,7 @@ async def delete_device(device_id: int, db: AsyncSession = Depends(get_db)):
     await db.commit()
 
 
-# ========== 设备上传传感器数据 ==========
-@router.post("/sensor-data", response_model=SensorDataResponse, status_code=status.HTTP_201_CREATED)
-async def upload_sensor_data(
-    data: SensorDataCreate,
-    device: Device = Depends(verify_device_auth),
-    db: AsyncSession = Depends(get_db),
-    minio: MinIOClient = Depends(get_minio_client),
-):
-    sensor_data = SensorData(
-        device_id=device.id,
-        device_name=device.device_name,
-        temperature=data.temperature,
-        humidity=data.humidity,
-        battery_voltage=data.battery_voltage,
-        signal_strength=data.signal_strength,
-        recorded_at=data.recorded_at or datetime.utcnow(),
-    )
-    db.add(sensor_data)
-
-    # 更新设备最后心跳和状态
-    device.last_seen_at = datetime.utcnow()
-    device.status = DeviceStatus.ONLINE
-    if data.battery_voltage is not None:
-        # 可选：存储电池电压到设备表
-        pass
-
-    await db.commit()
-    await db.refresh(sensor_data)
-    return SensorDataResponse.model_validate(sensor_data)
-
-
-# ========== 获取设备传感器历史 ==========
-@router.get("/{device_id}/sensor-data", response_model=PageResponse)
-async def get_sensor_history(
-    device_id: int,
-    page: int = Query(1, ge=1),
-    size: int = Query(20, ge=1, le=100),
-    start_time: Optional[datetime] = None,
-    end_time: Optional[datetime] = None,
-    db: AsyncSession = Depends(get_db),
-):
-    query = select(SensorData).where(SensorData.device_id == device_id)
-    count_query = select(func.count(SensorData.id)).where(SensorData.device_id == device_id)
-
-    if start_time:
-        query = query.where(SensorData.recorded_at >= start_time)
-        count_query = count_query.where(SensorData.recorded_at >= start_time)
-    if end_time:
-        query = query.where(SensorData.recorded_at <= end_time)
-        count_query = count_query.where(SensorData.recorded_at <= end_time)
-
-    total = (await db.execute(count_query)).scalar()
-    query = query.order_by(SensorData.recorded_at.desc()).offset((page - 1) * size).limit(size)
-    result = await db.execute(query)
-    items = result.scalars().all()
-
-    return PageResponse.create(
-        items=[SensorDataResponse.model_validate(i).model_dump() for i in items],
-        total=total,
-        page=page,
-        size=size,
-    )
-
-
-# ========== 设备上传推理结果 ==========
+# ========== 设备上传推理结果 (含环境指标, 一次上报) ==========
 @router.post("/inference", response_model=InferenceResultResponse, status_code=status.HTTP_201_CREATED)
 async def upload_inference(
     data: InferenceResultCreate,
@@ -350,6 +255,10 @@ async def upload_inference(
         label=data.label,
         confidence=data.confidence,
         inference_time_ms=data.inference_time_ms,
+        temperature=data.temperature,
+        humidity=data.humidity,
+        battery_voltage=data.battery_voltage,
+        signal_strength=data.signal_strength,
         recorded_at=data.recorded_at or datetime.utcnow(),
     )
     db.add(inference)
@@ -360,6 +269,39 @@ async def upload_inference(
     await db.commit()
     await db.refresh(inference)
     return InferenceResultResponse.model_validate(inference)
+
+
+# ========== 获取设备记录 (含环境指标, 供看板曲线) ==========
+@router.get("/{device_id}/records", response_model=PageResponse)
+async def get_device_records(
+    device_id: int,
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=1, le=100),
+    start_time: Optional[datetime] = None,
+    end_time: Optional[datetime] = None,
+    db: AsyncSession = Depends(get_db),
+):
+    query = select(InferenceResult).where(InferenceResult.device_id == device_id)
+    count_query = select(func.count(InferenceResult.id)).where(InferenceResult.device_id == device_id)
+
+    if start_time:
+        query = query.where(InferenceResult.recorded_at >= start_time)
+        count_query = count_query.where(InferenceResult.recorded_at >= start_time)
+    if end_time:
+        query = query.where(InferenceResult.recorded_at <= end_time)
+        count_query = count_query.where(InferenceResult.recorded_at <= end_time)
+
+    total = (await db.execute(count_query)).scalar()
+    query = query.order_by(InferenceResult.recorded_at.desc()).offset((page - 1) * size).limit(size)
+    result = await db.execute(query)
+    items = result.scalars().all()
+
+    return PageResponse.create(
+        items=[DeviceRecordResponse.model_validate(i).model_dump() for i in items],
+        total=total,
+        page=page,
+        size=size,
+    )
 
 
 # ========== 获取推理历史 ==========
@@ -413,7 +355,6 @@ async def get_presigned_upload_url(
     if device.id != device_id:
         raise HTTPException(status_code=403, detail="Device ID mismatch")
 
-    from datetime import datetime
     object_key = f"audio/{datetime.utcnow().strftime('%Y/%m/%d')}/{device.device_name}/{filename}"
 
     upload_url = minio.get_presigned_put_url(object_key, expires_seconds=expires)

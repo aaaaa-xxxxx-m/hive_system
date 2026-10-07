@@ -26,38 +26,7 @@ CREATE TABLE IF NOT EXISTS devices (
     KEY idx_last_seen (last_seen_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='设备注册表';
 
--- ========== 传感器数据表 (按月分区) ==========
-CREATE TABLE IF NOT EXISTS sensor_data (
-    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '主键',
-    device_id BIGINT UNSIGNED NOT NULL COMMENT '设备 ID',
-    device_name VARCHAR(64) NOT NULL COMMENT '设备名 (冗余, 避免 JOIN)',
-    temperature DECIMAL(5, 2) COMMENT '温度 (°C)',
-    humidity DECIMAL(5, 2) COMMENT '湿度 (%)',
-    battery_voltage DECIMAL(5, 3) COMMENT '电池电压 (V)',
-    signal_strength INT COMMENT '信号强度 (dBm)',
-    recorded_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '采集时间',
-    received_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '服务器接收时间',
-    PRIMARY KEY (id, recorded_at),
-    KEY idx_device_recorded (device_id, recorded_at),
-    KEY idx_recorded (recorded_at)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='传感器数据 (温湿度等)'
-PARTITION BY RANGE (UNIX_TIMESTAMP(recorded_at)) (
-    PARTITION p202601 VALUES LESS THAN (UNIX_TIMESTAMP('2026-02-01')),
-    PARTITION p202602 VALUES LESS THAN (UNIX_TIMESTAMP('2026-03-01')),
-    PARTITION p202603 VALUES LESS THAN (UNIX_TIMESTAMP('2026-04-01')),
-    PARTITION p202604 VALUES LESS THAN (UNIX_TIMESTAMP('2026-05-01')),
-    PARTITION p202605 VALUES LESS THAN (UNIX_TIMESTAMP('2026-06-01')),
-    PARTITION p202606 VALUES LESS THAN (UNIX_TIMESTAMP('2026-07-01')),
-    PARTITION p202607 VALUES LESS THAN (UNIX_TIMESTAMP('2026-08-01')),
-    PARTITION p202608 VALUES LESS THAN (UNIX_TIMESTAMP('2026-09-01')),
-    PARTITION p202609 VALUES LESS THAN (UNIX_TIMESTAMP('2026-10-01')),
-    PARTITION p202610 VALUES LESS THAN (UNIX_TIMESTAMP('2026-11-01')),
-    PARTITION p202611 VALUES LESS THAN (UNIX_TIMESTAMP('2026-12-01')),
-    PARTITION p202612 VALUES LESS THAN (UNIX_TIMESTAMP('2027-01-01')),
-    PARTITION p_future VALUES LESS THAN MAXVALUE
-);
-
--- ========== 推理结果表 (按月分区) ==========
+-- ========== 推理结果表 (按月分区) —— 同时承载环境指标 (方案 C: 合并原 sensor_data) ==========
 CREATE TABLE IF NOT EXISTS inference_results (
     id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '主键',
     device_id BIGINT UNSIGNED NOT NULL COMMENT '设备 ID',
@@ -70,6 +39,10 @@ CREATE TABLE IF NOT EXISTS inference_results (
     label ENUM('no_queen', 'normal', 'uncertain') NOT NULL COMMENT '推理标签',
     confidence DECIMAL(5, 4) NOT NULL COMMENT '置信度',
     inference_time_ms INT UNSIGNED COMMENT '推理耗时 (ms)',
+    temperature DECIMAL(5, 2) COMMENT '温度 (°C)',
+    humidity DECIMAL(5, 2) COMMENT '湿度 (%)',
+    battery_voltage DECIMAL(5, 3) COMMENT '电池电压 (V)',
+    signal_strength INT COMMENT '信号强度 (dBm)',
     recorded_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '采集时间',
     received_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '服务器接收时间',
     processed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '处理完成时间',
@@ -141,6 +114,24 @@ CREATE TABLE IF NOT EXISTS training_jobs (
     FOREIGN KEY (model_version_id) REFERENCES model_versions(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='训练任务记录';
 
+-- ========== 数据下载任务表 ==========
+CREATE TABLE IF NOT EXISTS download_jobs (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '主键',
+    job_id CHAR(36) NOT NULL COMMENT '任务 UUID',
+    device_name VARCHAR(64) NOT NULL COMMENT '设备名',
+    data_limit INT UNSIGNED NOT NULL COMMENT '打包最近 N 条记录',
+    status ENUM('pending', 'running', 'completed', 'failed') NOT NULL DEFAULT 'pending' COMMENT '任务状态',
+    progress INT UNSIGNED NOT NULL DEFAULT 0 COMMENT '进度百分比',
+    object_key VARCHAR(256) COMMENT 'MinIO 导出包键',
+    error_message TEXT COMMENT '错误信息',
+    started_at TIMESTAMP NULL COMMENT '开始时间',
+    completed_at TIMESTAMP NULL COMMENT '完成时间',
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_job_id (job_id),
+    KEY idx_status (status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='数据下载任务记录';
+
 -- ========== 特征数据表 (原始特征, 仅保留最近 30 天) ==========
 CREATE TABLE IF NOT EXISTS raw_features (
     id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '主键',
@@ -196,39 +187,23 @@ PARTITION BY RANGE (UNIX_TIMESTAMP(created_at)) (
 -- ========== 创建视图: 设备最新状态 ==========
 CREATE OR REPLACE VIEW v_device_latest AS
 SELECT
-    d.id,
-    d.device_name,
-    d.name,
-    d.status,
-    d.last_seen_at,
-    d.firmware_version,
-    d.location_lat,
-    d.location_lng,
-    d.location_desc,
-    sr.temperature,
-    sr.humidity,
-    sr.battery_voltage,
-    sr.signal_strength,
-    sr.recorded_at AS sensor_recorded_at,
-    ir.probability_no_queen,
-    ir.probability_normal,
-    ir.label AS inference_label,
-    ir.confidence,
-    ir.recorded_at AS inference_recorded_at,
-    ir.model_version
-FROM devices d
-LEFT JOIN (
-    SELECT device_id, temperature, humidity, battery_voltage, signal_strength, recorded_at
-    FROM sensor_data
-    WHERE recorded_at >= DATE_SUB(NOW(), INTERVAL 1 HOUR)
-    ORDER BY recorded_at DESC
-) sr ON d.id = sr.device_id
-LEFT JOIN (
-    SELECT device_id, probability_no_queen, probability_normal, label, confidence, recorded_at, model_version
-    FROM inference_results
-    WHERE recorded_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)
-    ORDER BY recorded_at DESC
-) ir ON d.id = ir.device_id;
+    t.id, t.device_name, t.name, t.status, t.last_seen_at, t.firmware_version,
+    t.location_lat, t.location_lng, t.location_desc,
+    t.temperature, t.humidity, t.battery_voltage, t.signal_strength,
+    t.recorded_at AS sensor_recorded_at,
+    t.probability_no_queen, t.probability_normal, t.label AS inference_label,
+    t.confidence, t.recorded_at AS inference_recorded_at, t.model_version
+FROM (
+    SELECT d.id, d.device_name, d.name, d.status, d.last_seen_at, d.firmware_version,
+           d.location_lat, d.location_lng, d.location_desc,
+           ir.temperature, ir.humidity, ir.battery_voltage, ir.signal_strength,
+           ir.probability_no_queen, ir.probability_normal, ir.label, ir.confidence,
+           ir.model_version, ir.recorded_at,
+           ROW_NUMBER() OVER (PARTITION BY d.id ORDER BY ir.recorded_at DESC) AS rn
+    FROM devices d
+    LEFT JOIN inference_results ir ON d.id = ir.device_id
+) t
+WHERE t.rn = 1;
 
 -- ========== 创建视图: 每日推理统计 ==========
 CREATE OR REPLACE VIEW v_daily_inference_stats AS

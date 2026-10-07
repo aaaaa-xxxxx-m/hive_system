@@ -65,6 +65,13 @@ class TrainingJobStatus(str, enum.Enum):
     CANCELLED = "cancelled"
 
 
+class DownloadJobStatus(str, enum.Enum):
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
 class RawFeatureLabel(str, enum.Enum):
     NO_QUEEN = "no_queen"
     NORMAL = "normal"
@@ -105,28 +112,7 @@ class Device(Base):
 
 
 # ============================================================
-# 传感器数据 (按月分区)
-# ============================================================
-class SensorData(Base):
-    __tablename__ = "sensor_data"
-
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    device_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
-    device_name: Mapped[str] = mapped_column(String(64), nullable=False)
-    temperature: Mapped[Optional[float]] = mapped_column(Numeric(5, 2))
-    humidity: Mapped[Optional[float]] = mapped_column(Numeric(5, 2))
-    battery_voltage: Mapped[Optional[float]] = mapped_column(Numeric(5, 3))
-    signal_strength: Mapped[Optional[int]] = mapped_column(Integer)
-    recorded_at: Mapped[datetime] = mapped_column(
-        DateTime, server_default=func.now(), nullable=False
-    )
-    received_at: Mapped[datetime] = mapped_column(
-        DateTime, server_default=func.now(), nullable=False
-    )
-
-
-# ============================================================
-# 推理结果 (按月分区)
+# 推理结果 (按月分区) —— 同时承载环境指标 (方案 C: 合并 sensor_data)
 # ============================================================
 class InferenceResult(Base):
     __tablename__ = "inference_results"
@@ -144,6 +130,11 @@ class InferenceResult(Base):
     )
     confidence: Mapped[float] = mapped_column(Numeric(5, 4), nullable=False)
     inference_time_ms: Mapped[Optional[int]] = mapped_column(Integer)
+    # 环境指标 (随音频一并上报)
+    temperature: Mapped[Optional[float]] = mapped_column(Numeric(5, 2))
+    humidity: Mapped[Optional[float]] = mapped_column(Numeric(5, 2))
+    battery_voltage: Mapped[Optional[float]] = mapped_column(Numeric(5, 3))
+    signal_strength: Mapped[Optional[int]] = mapped_column(Integer)
     recorded_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), nullable=False
     )
@@ -218,6 +209,31 @@ class TrainingJob(Base):
 
 
 # ============================================================
+# 数据下载任务
+# ============================================================
+class DownloadJob(Base):
+    __tablename__ = "download_jobs"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    job_id: Mapped[str] = mapped_column(String(36), unique=True, nullable=False)
+    device_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    data_limit: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[DownloadJobStatus] = mapped_column(
+        _enum(DownloadJobStatus, "download_job_status"),
+        default=DownloadJobStatus.PENDING,
+        nullable=False,
+    )
+    progress: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    object_key: Mapped[Optional[str]] = mapped_column(String(256))
+    error_message: Mapped[Optional[str]] = mapped_column(Text)
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), nullable=False
+    )
+
+
+# ============================================================
 # 原始特征数据 (30 天保留)
 # ============================================================
 class RawFeature(Base):
@@ -270,12 +286,13 @@ __all__ = [
     "ModelType",
     "ModelStatus",
     "TrainingJobStatus",
+    "DownloadJobStatus",
     "RawFeatureLabel",
     "Device",
-    "SensorData",
     "InferenceResult",
     "ModelVersion",
     "TrainingJob",
+    "DownloadJob",
     "RawFeature",
     "AuditLog",
 ]

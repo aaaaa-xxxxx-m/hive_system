@@ -40,6 +40,13 @@ class TrainingJobStatus(str, Enum):
     CANCELLED = "cancelled"
 
 
+class DownloadJobStatus(str, Enum):
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
 # ========== Device Schemas ==========
 class DeviceBase(BaseModel):
     device_name: str = Field(..., min_length=1, max_length=64, pattern=r"^[\w\u4e00-\u9fa5-]+$")
@@ -98,22 +105,13 @@ class DeviceSummary(BaseModel):
 
 
 class DeviceDownloadCatalog(BaseModel):
-    """数据下载设备目录: 每设备的数据量计数"""
+    """数据下载设备目录: 每设备的记录条数"""
     device_name: str
-    sensor_count: int = 0
-    inference_count: int = 0
+    record_count: int = 0
 
 
-# ========== Sensor Data Schemas ==========
-class SensorDataCreate(BaseModel):
-    temperature: Optional[float] = Field(None, ge=-50, le=100)
-    humidity: Optional[float] = Field(None, ge=0, le=100)
-    battery_voltage: Optional[float] = Field(None, ge=0, le=5)
-    signal_strength: Optional[int] = Field(None, ge=-120, le=0)
-    recorded_at: Optional[datetime] = None
-
-
-class SensorDataResponse(BaseModel):
+# ========== Device Record Schema (方案 C: 音频与指标合并后的每事件记录) ==========
+class DeviceRecordResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
@@ -137,6 +135,11 @@ class InferenceResultCreate(BaseModel):
     label: InferenceLabel
     confidence: float = Field(..., ge=0, le=1)
     inference_time_ms: Optional[int] = Field(None, ge=0)
+    # 环境指标 (随音频一并上报, 方案 C)
+    temperature: Optional[float] = Field(None, ge=-50, le=100)
+    humidity: Optional[float] = Field(None, ge=0, le=100)
+    battery_voltage: Optional[float] = Field(None, ge=0, le=5)
+    signal_strength: Optional[int] = Field(None, ge=-120, le=0)
     recorded_at: Optional[datetime] = None
 
 
@@ -154,6 +157,10 @@ class InferenceResultResponse(BaseModel):
     label: InferenceLabel
     confidence: float
     inference_time_ms: Optional[int]
+    temperature: Optional[float]
+    humidity: Optional[float]
+    battery_voltage: Optional[float]
+    signal_strength: Optional[int]
     recorded_at: datetime
     received_at: datetime
     processed_at: datetime
@@ -277,6 +284,20 @@ class PageResponse(BaseModel):
             size=size,
             pages=(total + size - 1) // size
         )
+
+
+# ========== Download Schemas ==========
+class DownloadJobCreate(BaseModel):
+    device_name: str = Field(..., min_length=1, max_length=64)
+    limit: int = Field(..., ge=1, le=10000, description="打包最近 N 条音频记录")
+
+
+class DownloadJobResponse(BaseModel):
+    job_id: str
+    status: DownloadJobStatus
+    progress: int
+    download_url: Optional[str] = None
+    error: Optional[str] = None
 
 
 # ========== Common Response ==========
