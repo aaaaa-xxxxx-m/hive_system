@@ -97,6 +97,13 @@ class DeviceSummary(BaseModel):
     humidity: Optional[float] = None
 
 
+class DeviceDownloadCatalog(BaseModel):
+    """数据下载设备目录: 每设备的数据量计数"""
+    device_name: str
+    sensor_count: int = 0
+    inference_count: int = 0
+
+
 # ========== Sensor Data Schemas ==========
 class SensorDataCreate(BaseModel):
     temperature: Optional[float] = Field(None, ge=-50, le=100)

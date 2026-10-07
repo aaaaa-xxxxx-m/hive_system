@@ -11,6 +11,7 @@ from app.core.database import get_db
 from app.models.models import Device, SensorData, InferenceResult, DeviceStatus, InferenceLabel
 from app.schemas.schemas import (
     DeviceCreate, DeviceUpdate, DeviceResponse, DeviceWithDetails, DeviceSummary,
+    DeviceDownloadCatalog,
     SensorDataCreate, SensorDataResponse,
     InferenceResultCreate, InferenceResultResponse,
     PageParams, PageResponse, APIResponse, ErrorResponse,
@@ -139,6 +140,40 @@ async def devices_summary(db: AsyncSession = Depends(get_db)):
     )
     return [
         DeviceSummary(device_name=r.device_name, temperature=r.temperature, humidity=r.humidity)
+        for r in result.all()
+    ]
+
+
+# ========== 数据下载设备目录 (每设备数据量) ==========
+@router.get("/download-catalog", response_model=List[DeviceDownloadCatalog])
+async def device_download_catalog(db: AsyncSession = Depends(get_db)):
+    """返回每个设备名 + 传感器 / 推理数据量计数。"""
+    sensor_counts = (
+        select(SensorData.device_id.label("device_id"), func.count().label("cnt"))
+        .group_by(SensorData.device_id)
+        .subquery()
+    )
+    inference_counts = (
+        select(InferenceResult.device_id.label("device_id"), func.count().label("cnt"))
+        .group_by(InferenceResult.device_id)
+        .subquery()
+    )
+    result = await db.execute(
+        select(
+            Device.device_name,
+            func.coalesce(sensor_counts.c.cnt, 0).label("sensor_count"),
+            func.coalesce(inference_counts.c.cnt, 0).label("inference_count"),
+        )
+        .outerjoin(sensor_counts, sensor_counts.c.device_id == Device.id)
+        .outerjoin(inference_counts, inference_counts.c.device_id == Device.id)
+        .order_by(Device.device_name)
+    )
+    return [
+        DeviceDownloadCatalog(
+            device_name=r.device_name,
+            sensor_count=int(r.sensor_count or 0),
+            inference_count=int(r.inference_count or 0),
+        )
         for r in result.all()
     ]
 
