@@ -31,3 +31,10 @@ async def login(req: LoginRequest, db: AsyncSession = Depends(get_db)):
 @router.get("/me", response_model=AccountResponse)
 async def me(account: Account = Depends(get_current_account)):
     return AccountResponse.model_validate(account)
+
+
+@router.post("/guest", response_model=TokenResponse)
+async def guest_login():
+    """游客令牌：用于只读访问（无账号，仅查看）。"""
+    token = create_access_token("guest", "guest")
+    return TokenResponse(token=token, username="游客", role="guest")

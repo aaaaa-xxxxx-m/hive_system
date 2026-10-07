@@ -8,7 +8,7 @@ import secrets
 
 from app.core.database import get_db
 from app.models.models import Account, Device, InferenceResult, DeviceStatus, InferenceLabel
-from app.api.deps import get_current_account
+from app.api.deps import get_current_account, require_viewer
 from app.schemas.schemas import (
     DeviceCreate, DeviceUpdate, DeviceResponse, DeviceWithDetails, DeviceSummary,
     DeviceDownloadCatalog,
@@ -97,6 +97,7 @@ async def list_devices(
     size: int = Query(20, ge=1, le=100),
     status: Optional[DeviceStatus] = None,
     db: AsyncSession = Depends(get_db),
+    _viewer=Depends(require_viewer),
 ):
     query = select(Device)
     count_query = select(func.count(Device.id))
@@ -120,7 +121,10 @@ async def list_devices(
 
 # ========== 首页聚合列表 (每设备最新一条记录) ==========
 @router.get("/summary", response_model=List[DeviceSummary])
-async def devices_summary(db: AsyncSession = Depends(get_db)):
+async def devices_summary(
+    db: AsyncSession = Depends(get_db),
+    _viewer=Depends(require_viewer),
+):
     """返回所有设备名 + 最新温湿度 (来自合并后的 inference_results)。"""
     latest = (
         select(
@@ -152,7 +156,10 @@ async def devices_summary(db: AsyncSession = Depends(get_db)):
 
 # ========== 数据下载设备目录 (每设备记录数) ==========
 @router.get("/download-catalog", response_model=List[DeviceDownloadCatalog])
-async def device_download_catalog(db: AsyncSession = Depends(get_db)):
+async def device_download_catalog(
+    db: AsyncSession = Depends(get_db),
+    _viewer=Depends(require_viewer),
+):
     """返回每个设备名 + 可用记录条数。"""
     counts = (
         select(InferenceResult.device_id.label("device_id"), func.count().label("cnt"))
@@ -200,7 +207,11 @@ async def _device_with_details(device: Device, db: AsyncSession) -> DeviceWithDe
 
 # ========== 按设备名查询详情 ==========
 @router.get("/by-name/{device_name}", response_model=DeviceWithDetails)
-async def get_device_by_name(device_name: str, db: AsyncSession = Depends(get_db)):
+async def get_device_by_name(
+    device_name: str,
+    db: AsyncSession = Depends(get_db),
+    _viewer=Depends(require_viewer),
+):
     result = await db.execute(select(Device).where(Device.device_name == device_name))
     device = result.scalar_one_or_none()
     if not device:
@@ -210,7 +221,11 @@ async def get_device_by_name(device_name: str, db: AsyncSession = Depends(get_db
 
 # ========== 设备详情 (含最新记录) ==========
 @router.get("/{device_id}", response_model=DeviceWithDetails)
-async def get_device(device_id: int, db: AsyncSession = Depends(get_db)):
+async def get_device(
+    device_id: int,
+    db: AsyncSession = Depends(get_db),
+    _viewer=Depends(require_viewer),
+):
     result = await db.execute(select(Device).where(Device.id == device_id))
     device = result.scalar_one_or_none()
     if not device:
@@ -300,6 +315,7 @@ async def get_device_records(
     start_time: Optional[datetime] = None,
     end_time: Optional[datetime] = None,
     db: AsyncSession = Depends(get_db),
+    _viewer=Depends(require_viewer),
 ):
     query = select(InferenceResult).where(InferenceResult.device_id == device_id)
     count_query = select(func.count(InferenceResult.id)).where(InferenceResult.device_id == device_id)
@@ -334,6 +350,7 @@ async def get_inference_history(
     start_time: Optional[datetime] = None,
     end_time: Optional[datetime] = None,
     db: AsyncSession = Depends(get_db),
+    _viewer=Depends(require_viewer),
 ):
     query = select(InferenceResult).where(InferenceResult.device_id == device_id)
     count_query = select(func.count(InferenceResult.id)).where(InferenceResult.device_id == device_id)

@@ -315,7 +315,7 @@ class LoginRequest(BaseModel):
 class TokenResponse(BaseModel):
     token: str
     username: str
-    role: AccountRole
+    role: str  # user | admin | guest
 
 
 class AccountCreate(BaseModel):
