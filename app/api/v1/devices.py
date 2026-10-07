@@ -7,7 +7,8 @@ import hashlib
 import secrets
 
 from app.core.database import get_db
-from app.models.models import Device, InferenceResult, DeviceStatus, InferenceLabel
+from app.models.models import Account, Device, InferenceResult, DeviceStatus, InferenceLabel
+from app.api.deps import get_current_account
 from app.schemas.schemas import (
     DeviceCreate, DeviceUpdate, DeviceResponse, DeviceWithDetails, DeviceSummary,
     DeviceDownloadCatalog,
@@ -53,8 +54,12 @@ async def verify_device_auth(
 
 # ========== 设备注册 (管理端) ==========
 @router.post("", response_model=APIResponse, status_code=status.HTTP_201_CREATED)
-async def register_device(device_in: DeviceCreate, db: AsyncSession = Depends(get_db)):
-    """注册新设备 (管理员接口)"""
+async def register_device(
+    device_in: DeviceCreate,
+    db: AsyncSession = Depends(get_db),
+    _account: Account = Depends(get_current_account),
+):
+    """注册新设备 (需登录)"""
     existing = await db.execute(select(Device).where(Device.device_name == device_in.device_name))
     if existing.scalar_one_or_none():
         raise HTTPException(
@@ -215,7 +220,12 @@ async def get_device(device_id: int, db: AsyncSession = Depends(get_db)):
 
 # ========== 更新设备 ==========
 @router.patch("/{device_id}", response_model=DeviceResponse)
-async def update_device(device_id: int, device_in: DeviceUpdate, db: AsyncSession = Depends(get_db)):
+async def update_device(
+    device_id: int,
+    device_in: DeviceUpdate,
+    db: AsyncSession = Depends(get_db),
+    _account: Account = Depends(get_current_account),
+):
     result = await db.execute(select(Device).where(Device.id == device_id))
     device = result.scalar_one_or_none()
     if not device:
@@ -233,7 +243,11 @@ async def update_device(device_id: int, device_in: DeviceUpdate, db: AsyncSessio
 
 # ========== 删除设备 ==========
 @router.delete("/{device_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_device(device_id: int, db: AsyncSession = Depends(get_db)):
+async def delete_device(
+    device_id: int,
+    db: AsyncSession = Depends(get_db),
+    _account: Account = Depends(get_current_account),
+):
     result = await db.execute(select(Device).where(Device.id == device_id))
     device = result.scalar_one_or_none()
     if not device:

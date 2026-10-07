@@ -291,7 +291,6 @@ class PageResponse(BaseModel):
 class DownloadJobCreate(BaseModel):
     device_name: str = Field(..., min_length=1, max_length=64)
     limit: int = Field(..., ge=1, le=10000, description="打包最近 N 条音频记录")
-    username: Optional[str] = Field(None, max_length=64, description="触发账号 (主界面接入后由登录态提供)")
 
 
 class DownloadJobResponse(BaseModel):

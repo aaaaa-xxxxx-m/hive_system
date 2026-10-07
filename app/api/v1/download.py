@@ -4,7 +4,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from app.core.database import get_db
-from app.models.models import Device, DownloadJob, DownloadJobStatus
+from app.models.models import Account, Device, DownloadJob, DownloadJobStatus
+from app.api.deps import get_current_account
 from app.schemas.schemas import (
     DownloadJobCreate,
     DownloadJobResponse,
@@ -17,7 +18,11 @@ router = APIRouter(prefix="/download", tags=["Download"])
 
 
 @router.post("", response_model=APIResponse, status_code=status.HTTP_202_ACCEPTED)
-async def start_download(req: DownloadJobCreate, db: AsyncSession = Depends(get_db)):
+async def start_download(
+    req: DownloadJobCreate,
+    db: AsyncSession = Depends(get_db),
+    account: Account = Depends(get_current_account),
+):
     """创建一个数据打包任务 (异步)。"""
     device = (
         await db.execute(select(Device).where(Device.device_name == req.device_name))
@@ -28,7 +33,7 @@ async def start_download(req: DownloadJobCreate, db: AsyncSession = Depends(get_
     job = DownloadJob(
         job_id=str(uuid.uuid4()),
         device_name=device.device_name,
-        username=req.username,
+        username=account.username,
         data_limit=req.limit,
         status=DownloadJobStatus.PENDING,
         progress=0,
@@ -47,6 +52,7 @@ async def get_download_job(
     job_id: str,
     db: AsyncSession = Depends(get_db),
     minio: MinIOClient = Depends(get_minio_client),
+    _account: Account = Depends(get_current_account),
 ):
     job = (
         await db.execute(select(DownloadJob).where(DownloadJob.job_id == job_id))
