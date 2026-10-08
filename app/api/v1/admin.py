@@ -189,6 +189,7 @@ async def delete_account(
 @router.get("/download-jobs", response_model=PageResponse)
 async def list_download_jobs(
     username: Optional[str] = None,
+    device_name: Optional[str] = None,
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
@@ -198,6 +199,10 @@ async def list_download_jobs(
     if username:
         # 模糊筛选：账号名包含该内容即匹配（转义 % / _ 以免被当通配符）
         cond = DownloadJob.username.contains(username, autoescape=True)
+        query = query.where(cond)
+        count_query = count_query.where(cond)
+    if device_name:
+        cond = DownloadJob.device_name.contains(device_name, autoescape=True)
         query = query.where(cond)
         count_query = count_query.where(cond)
 
