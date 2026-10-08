@@ -66,6 +66,8 @@ class Settings(BaseSettings):
     API_KEY_SALT: str
     # 单账号单会话：空闲多久（分钟）自动释放登录态
     SESSION_IDLE_MINUTES: int = 30
+    # 登录时若已存在会话但「超过该秒数无活动」，视为陈旧并可被顶替（避免死会话挡住重登）
+    SESSION_TAKEOVER_GRACE_SECONDS: int = 90
 
     # 初始管理员 (accounts 表为空时自动创建)
     BOOTSTRAP_ADMIN_USER: str = "admin"
