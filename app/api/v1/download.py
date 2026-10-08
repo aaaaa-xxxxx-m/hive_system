@@ -34,6 +34,7 @@ async def start_download(
         job_id=str(uuid.uuid4()),
         device_name=device.device_name,
         username=account.username,
+        account_id=account.id,
         data_limit=req.limit,
         status=DownloadJobStatus.PENDING,
         progress=0,

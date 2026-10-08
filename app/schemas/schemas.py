@@ -325,6 +325,10 @@ class AccountCreate(BaseModel):
     role: AccountRole = AccountRole.USER
 
 
+class AccountPasswordUpdate(BaseModel):
+    password: str = Field(..., min_length=4, max_length=128)
+
+
 class AccountResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -339,6 +343,7 @@ class AccountResponse(BaseModel):
 class DownloadJobAdminItem(BaseModel):
     job_id: str
     username: Optional[str] = None
+    account_id: Optional[int] = None
     device_name: str
     data_limit: int
     status: DownloadJobStatus

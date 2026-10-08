@@ -123,6 +123,7 @@ CREATE TABLE IF NOT EXISTS download_jobs (
     job_id CHAR(36) NOT NULL COMMENT '任务 UUID',
     device_name VARCHAR(64) NOT NULL COMMENT '设备名',
     username VARCHAR(64) COMMENT '触发账号 (主界面接入后写入)',
+    account_id BIGINT UNSIGNED COMMENT '触发账号 ID (关联 accounts.id; 账号删除后置空=已注销)',
     data_limit INT UNSIGNED NOT NULL COMMENT '打包最近 N 条记录',
     status ENUM('pending', 'running', 'completed', 'failed') NOT NULL DEFAULT 'pending' COMMENT '任务状态',
     progress INT UNSIGNED NOT NULL DEFAULT 0 COMMENT '进度百分比',
@@ -133,7 +134,8 @@ CREATE TABLE IF NOT EXISTS download_jobs (
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     PRIMARY KEY (id),
     UNIQUE KEY uk_job_id (job_id),
-    KEY idx_status (status)
+    KEY idx_status (status),
+    KEY idx_account_id (account_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='数据下载任务记录';
 
 -- ========== 登录账号表 (普通用户 / 管理员) ==========

@@ -9,12 +9,14 @@ from app.core.security import hash_password
 from app.models.models import Account, AccountRole, DownloadJob, DownloadJobStatus
 from app.schemas.schemas import (
     AccountCreate,
+    AccountPasswordUpdate,
     AccountResponse,
     DownloadJobAdminItem,
     DownloadStats,
     PageResponse,
 )
 from app.api.deps import require_admin
+from app.services.minio_client import get_minio_client, MinIOClient
 
 router = APIRouter(prefix="/admin", tags=["Admin"], dependencies=[Depends(require_admin)])
 
@@ -46,10 +48,35 @@ async def create_account(body: AccountCreate, db: AsyncSession = Depends(get_db)
     return AccountResponse.model_validate(account)
 
 
+@router.put("/accounts/{account_id}/password", response_model=AccountResponse)
+async def update_account_password(
+    account_id: int,
+    body: AccountPasswordUpdate,
+    db: AsyncSession = Depends(get_db),
+):
+    """重置指定账号的密码（管理员操作，可作用于任意账号）。"""
+    account = (
+        await db.execute(select(Account).where(Account.id == account_id))
+    ).scalar_one_or_none()
+    if not account:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="账号不存在")
+
+    account.password_hash = hash_password(body.password)
+    await db.commit()
+    await db.refresh(account)
+    return AccountResponse.model_validate(account)
+
+
 @router.delete("/accounts/{account_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_account(
     account_id: int,
+    records: str = Query(
+        "keep",
+        pattern="^(delete|keep)$",
+        description="下载记录处理: delete=一并删除记录与文件, keep=保留并解除绑定(标注已注销)",
+    ),
     db: AsyncSession = Depends(get_db),
+    minio: MinIOClient = Depends(get_minio_client),
     admin: Account = Depends(require_admin),
 ):
     account = (
@@ -65,6 +92,27 @@ async def delete_account(
         ).scalar()
         if (admin_count or 0) <= 1:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="不能删除最后一个管理员")
+
+    # 该账号名下的下载记录（严格按 account_id 绑定；不再按用户名兜底，
+    # 避免同名账号被重建后误删旧账号遗留的「已注销」记录）
+    jobs = (
+        await db.execute(
+            select(DownloadJob).where(DownloadJob.account_id == account.id)
+        )
+    ).scalars().all()
+
+    if records == "delete":
+        for job in jobs:
+            if job.object_key:
+                try:
+                    minio.delete_file(job.object_key)
+                except Exception:
+                    pass  # 文件缺失不影响删除
+            await db.delete(job)
+    else:
+        # 保留记录：解除绑定（account_id 置空），username 快照保留用于展示「已注销」
+        for job in jobs:
+            job.account_id = None
 
     await db.delete(account)
     await db.commit()
@@ -92,6 +140,7 @@ async def list_download_jobs(
         DownloadJobAdminItem(
             job_id=j.job_id,
             username=j.username,
+            account_id=j.account_id,
             device_name=j.device_name,
             data_limit=j.data_limit,
             status=j.status,
@@ -146,3 +195,28 @@ async def download_stats(db: AsyncSession = Depends(get_db)):
         failed_jobs=int(failed),
         by_account=by_account,
     )
+
+
+@router.delete("/download-jobs/{job_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_download_job(
+    job_id: str,
+    db: AsyncSession = Depends(get_db),
+    minio: MinIOClient = Depends(get_minio_client),
+):
+    """删除一条下载日志（同时删除其已生成的导出文件）。"""
+    job = (
+        await db.execute(select(DownloadJob).where(DownloadJob.job_id == job_id))
+    ).scalar_one_or_none()
+    if not job:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="记录不存在")
+    if job.status == DownloadJobStatus.RUNNING:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="任务进行中，暂不能删除")
+
+    if job.object_key:
+        try:
+            minio.delete_file(job.object_key)
+        except Exception:
+            pass  # 文件缺失不影响记录删除
+
+    await db.delete(job)
+    await db.commit()

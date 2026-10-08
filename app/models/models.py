@@ -227,6 +227,7 @@ class DownloadJob(Base):
     job_id: Mapped[str] = mapped_column(String(36), unique=True, nullable=False)
     device_name: Mapped[str] = mapped_column(String(64), nullable=False)
     username: Mapped[Optional[str]] = mapped_column(String(64))
+    account_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True, index=True)
     data_limit: Mapped[int] = mapped_column(Integer, nullable=False)
     status: Mapped[DownloadJobStatus] = mapped_column(
         _enum(DownloadJobStatus, "download_job_status"),
