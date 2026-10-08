@@ -282,6 +282,8 @@ class Account(Base):
         _enum(AccountRole, "account_role"), default=AccountRole.USER, nullable=False
     )
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    # 超级管理员：系统唯一，不可删除、不可强制下线（由 bootstrap 创建，迁移置位）
+    is_superadmin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), nullable=False
     )

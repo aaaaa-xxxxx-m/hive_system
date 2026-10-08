@@ -348,6 +348,7 @@ class AccountAdminItem(AccountResponse):
     """管理端账号列表项：附加在线状态（是否有有效会话）。"""
 
     online: bool = False
+    is_superadmin: bool = False
 
 
 class DownloadJobAdminItem(BaseModel):

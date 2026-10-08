@@ -164,6 +164,7 @@ CREATE TABLE IF NOT EXISTS accounts (
     password_hash VARCHAR(255) NOT NULL COMMENT 'bcrypt 密码哈希',
     role ENUM('user', 'admin') NOT NULL DEFAULT 'user' COMMENT '角色',
     enabled BOOLEAN NOT NULL DEFAULT TRUE COMMENT '是否启用',
+    is_superadmin BOOLEAN NOT NULL DEFAULT FALSE COMMENT '超级管理员(唯一,不可删除/不可强制下线)',
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     last_login_at TIMESTAMP NULL COMMENT '最后登录时间',
     PRIMARY KEY (id),

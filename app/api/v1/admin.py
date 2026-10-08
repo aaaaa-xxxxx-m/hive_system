@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import case, func, select, update
+from sqlalchemy import case, delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -33,6 +33,7 @@ from app.schemas.schemas import (
     DeviceOrphanItem,
     DownloadJobAdminItem,
     DownloadStats,
+    ModelUpdateRecord,
     PageResponse,
     APIResponse,
 )
@@ -115,6 +116,8 @@ async def update_account_role(
     ).scalar_one_or_none()
     if not account:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="账号不存在")
+    if account.is_superadmin:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="超级管理员不可修改角色")
     if account.id == admin.id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="不能修改自己的角色")
 
@@ -144,6 +147,8 @@ async def force_logout_account(
     if not account:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="账号不存在")
 
+    if account.is_superadmin:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="超级管理员不可强制下线")
     was_online = bool(await get_redis().exists(session_key(account.id)))
     await clear_session(account.id)
     return APIResponse(
@@ -169,6 +174,8 @@ async def delete_account(
     ).scalar_one_or_none()
     if not account:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="账号不存在")
+    if account.is_superadmin:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="超级管理员不可删除")
     if account.id == admin.id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="不能删除当前登录账号")
     if account.role == AccountRole.ADMIN:
@@ -484,3 +491,55 @@ async def cancel_model_update(
     )
     await db.commit()
     return APIResponse(data={"cancelled": res.rowcount or 0})
+
+
+@router.get("/devices/{device_name}/model-update/records", response_model=List[ModelUpdateRecord])
+async def admin_device_update_records(
+    device_name: str,
+    limit: int = Query(50, ge=1, le=200),
+    db: AsyncSession = Depends(get_db),
+):
+    """查看某设备的模型更新日志。"""
+    jobs = (
+        await db.execute(
+            select(TrainingJob)
+            .where(TrainingJob.device_name == device_name)
+            .order_by(TrainingJob.created_at.desc())
+            .limit(limit)
+        )
+    ).scalars().all()
+    ids = [j.model_version_id for j in jobs if j.model_version_id]
+    versions: dict = {}
+    if ids:
+        rows = (
+            await db.execute(select(ModelVersion.id, ModelVersion.version).where(ModelVersion.id.in_(ids)))
+        ).all()
+        versions = {r[0]: r[1] for r in rows}
+    return [
+        ModelUpdateRecord(
+            job_id=j.job_id,
+            status=getattr(j.status, "value", j.status),
+            progress=j.progress or 0,
+            feature_count=j.feature_count or 0,
+            requested_at=j.requested_at,
+            completed_at=j.completed_at,
+            model_version=versions.get(j.model_version_id),
+            error=j.error_message,
+        )
+        for j in jobs
+    ]
+
+
+@router.delete("/devices/{device_name}/model-update/records", response_model=APIResponse)
+async def admin_clear_device_update_records(
+    device_name: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """清空某设备的模型更新日志（用户端同步清空）。"""
+    res = await db.execute(
+        select(func.count(TrainingJob.id)).where(TrainingJob.device_name == device_name)
+    )
+    before = res.scalar() or 0
+    await db.execute(delete(TrainingJob).where(TrainingJob.device_name == device_name))
+    await db.commit()
+    return APIResponse(data={"deleted": int(before)}, message="已清空更新日志")

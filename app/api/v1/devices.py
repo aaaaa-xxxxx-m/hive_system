@@ -599,3 +599,42 @@ async def get_model_update_records(
         )
         for j in jobs
     ]
+
+
+@router.post("/{device_name}/model-update/cancel", response_model=ModelUpdateStatus)
+async def cancel_model_update_user(
+    device_name: str,
+    db: AsyncSession = Depends(get_db),
+    _account: Account = Depends(get_current_account),
+):
+    """用户主动取消该设备进行中的模型更新。"""
+    device = (
+        await db.execute(select(Device).where(Device.device_name == device_name))
+    ).scalar_one_or_none()
+    if not device:
+        raise HTTPException(status_code=404, detail="Device not found")
+
+    await db.execute(
+        update(TrainingJob)
+        .where(
+            TrainingJob.device_name == device_name,
+            TrainingJob.status.in_(
+                [TrainingJobStatus.WAITING, TrainingJobStatus.PENDING, TrainingJobStatus.RUNNING]
+            ),
+        )
+        .values(
+            status=TrainingJobStatus.CANCELLED,
+            error_message="用户取消",
+            completed_at=datetime.utcnow(),
+        )
+    )
+    await db.commit()
+
+    job = await _latest_job(db, device_name)
+    version = None
+    if job and job.model_version_id:
+        mv = (
+            await db.execute(select(ModelVersion).where(ModelVersion.id == job.model_version_id))
+        ).scalar_one_or_none()
+        version = mv.version if mv else None
+    return _to_update_status(device_name, job, version)

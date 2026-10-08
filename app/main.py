@@ -55,7 +55,7 @@ ACTIVE_REQUESTS = Gauge("http_requests_active", "Active HTTP requests", ["method
 
 
 async def ensure_bootstrap_admin() -> None:
-    """accounts 为空时，按环境变量创建初始管理员。"""
+    """accounts 为空时，按环境变量创建初始超级管理员。"""
     async with async_session_maker() as db:
         count = (await db.execute(select(func.count(Account.id)))).scalar()
         if not count:
@@ -65,10 +65,20 @@ async def ensure_bootstrap_admin() -> None:
                     password_hash=hash_password(settings.BOOTSTRAP_ADMIN_PASSWORD),
                     role=AccountRole.ADMIN,
                     enabled=True,
+                    is_superadmin=True,
                 )
             )
             await db.commit()
             logger.info("Bootstrap admin created", username=settings.BOOTSTRAP_ADMIN_USER)
+            return
+        # 兜底：确保 bootstrap 账号被标记为超级管理员
+        bootstrap = (
+            await db.execute(select(Account).where(Account.username == settings.BOOTSTRAP_ADMIN_USER))
+        ).scalar_one_or_none()
+        if bootstrap and not bootstrap.is_superadmin:
+            bootstrap.is_superadmin = True
+            await db.commit()
+            logger.info("Bootstrap admin marked as superadmin", username=settings.BOOTSTRAP_ADMIN_USER)
 
 
 @asynccontextmanager
