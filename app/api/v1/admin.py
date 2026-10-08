@@ -263,11 +263,33 @@ async def download_stats(db: AsyncSession = Depends(get_db)):
         }
         for r in rows
     ]
+
+    device_rows = (
+        await db.execute(
+            select(
+                DownloadJob.device_name.label("device_name"),
+                func.count(DownloadJob.id).label("total"),
+                func.sum(case((DownloadJob.status == DownloadJobStatus.COMPLETED, 1), else_=0)).label("completed"),
+                func.sum(case((DownloadJob.status == DownloadJobStatus.FAILED, 1), else_=0)).label("failed"),
+            ).group_by(DownloadJob.device_name)
+        )
+    ).all()
+
+    by_device = [
+        {
+            "device_name": r.device_name,
+            "total": int(r.total or 0),
+            "completed": int(r.completed or 0),
+            "failed": int(r.failed or 0),
+        }
+        for r in device_rows
+    ]
     return DownloadStats(
         total_jobs=int(total),
         completed_jobs=int(completed),
         failed_jobs=int(failed),
         by_account=by_account,
+        by_device=by_device,
     )
 
 

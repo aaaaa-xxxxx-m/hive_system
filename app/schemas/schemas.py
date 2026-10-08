@@ -369,6 +369,7 @@ class DownloadStats(BaseModel):
     completed_jobs: int
     failed_jobs: int
     by_account: List[Dict[str, Any]]
+    by_device: List[Dict[str, Any]] = []
 
 
 # ========== 管理端设备管理 / 数据管理 ==========
