@@ -69,6 +69,13 @@ async def get_current_model(db: AsyncSession = Depends(get_db)):
     return ModelVersionResponse.model_validate(model)
 
 
+# ========== 获取模型公钥 (设备端验证用) ==========
+# 注意：必须定义在 "/{version}" 之前，否则会被当成版本号匹配
+@router.get("/public-key")
+async def get_public_key(model_manager: ModelManager = Depends(get_model_manager)):
+    return {"public_key_pem": model_manager.get_public_key_pem()}
+
+
 # ========== 获取模型详情 ==========
 @router.get("/{version}", response_model=ModelVersionResponse)
 async def get_model_version(version: str, db: AsyncSession = Depends(get_db)):
@@ -229,12 +236,6 @@ async def undeploy_model(version: str, db: AsyncSession = Depends(get_db)):
     await db.commit()
 
     return APIResponse(message=f"Model {version} undeployed")
-
-
-# ========== 获取模型公钥 (设备端验证用) ==========
-@router.get("/public-key")
-async def get_public_key(model_manager: ModelManager = Depends(get_model_manager)):
-    return {"public_key_pem": model_manager.get_public_key_pem()}
 
 
 # ========== 签名模型 (仅内部/测试用) ==========
