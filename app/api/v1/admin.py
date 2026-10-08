@@ -8,6 +8,7 @@ from app.core.database import get_db
 from app.core.security import hash_password
 from app.models.models import Account, AccountRole, DownloadJob, DownloadJobStatus
 from app.schemas.schemas import (
+    AccountAdminItem,
     AccountCreate,
     AccountPasswordUpdate,
     AccountResponse,
@@ -16,17 +17,24 @@ from app.schemas.schemas import (
     PageResponse,
 )
 from app.api.deps import require_admin
-from app.core.session import clear_session
+from app.core.redis_client import get_redis
+from app.core.session import clear_session, session_key
 from app.services.minio_client import get_minio_client, MinIOClient
 
 router = APIRouter(prefix="/admin", tags=["Admin"], dependencies=[Depends(require_admin)])
 
 
 # ========== 账号管理 ==========
-@router.get("/accounts", response_model=List[AccountResponse])
+@router.get("/accounts", response_model=List[AccountAdminItem])
 async def list_accounts(db: AsyncSession = Depends(get_db)):
     rows = (await db.execute(select(Account).order_by(Account.created_at.desc()))).scalars().all()
-    return [AccountResponse.model_validate(a) for a in rows]
+    redis = get_redis()
+    items: List[AccountAdminItem] = []
+    for a in rows:
+        item = AccountAdminItem.model_validate(a)
+        item.online = bool(await redis.exists(session_key(a.id)))
+        items.append(item)
+    return items
 
 
 @router.post("/accounts", response_model=AccountResponse, status_code=status.HTTP_201_CREATED)

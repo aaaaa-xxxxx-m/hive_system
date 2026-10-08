@@ -340,6 +340,12 @@ class AccountResponse(BaseModel):
     last_login_at: Optional[datetime]
 
 
+class AccountAdminItem(AccountResponse):
+    """管理端账号列表项：附加在线状态（是否有有效会话）。"""
+
+    online: bool = False
+
+
 class DownloadJobAdminItem(BaseModel):
     job_id: str
     username: Optional[str] = None
