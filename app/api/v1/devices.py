@@ -408,6 +408,32 @@ async def get_inference_history(
     )
 
 
+# ========== 设备端：预签名上传 URL（X-API-Key，self） ==========
+@router.get("/me/presigned-url", response_model=APIResponse)
+async def device_presigned_upload_url(
+    filename: str = Query(..., description="文件名"),
+    content_type: str = Query("application/octet-stream", description="MIME 类型"),
+    kind: str = Query("audio", description="audio | feature"),
+    expires: int = Query(3600, ge=60, le=86400, description="过期时间(秒)"),
+    device: Device = Depends(verify_device_auth),
+    minio: MinIOClient = Depends(get_minio_client),
+):
+    """设备端（X-API-Key）获取预签名上传 URL，直传 MinIO（音频/特征）。"""
+    if kind == "feature":
+        object_key = f"features/{device.device_name}/{datetime.utcnow().strftime('%Y%m%dT%H%M%S')}_{filename}"
+    else:
+        object_key = f"audio/{datetime.utcnow().strftime('%Y/%m/%d')}/{device.device_name}/{filename}"
+
+    upload_url = minio.get_presigned_put_url(object_key, expires_seconds=expires)
+    return APIResponse(data={
+        "upload_url": upload_url,
+        "object_key": object_key,
+        "expires_in": expires,
+        "method": "PUT",
+        "headers": {"Content-Type": content_type},
+    })
+
+
 # ========== 获取预签名上传 URL ==========
 @router.get("/{device_id}/presigned-url")
 async def get_presigned_upload_url(
