@@ -132,6 +132,26 @@ async def update_account_role(
     return AccountResponse.model_validate(account)
 
 
+@router.post("/accounts/{account_id}/force-logout", response_model=APIResponse)
+async def force_logout_account(
+    account_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """强制某账号下线（清其服务端会话，已发出的令牌立即失效）。"""
+    account = (
+        await db.execute(select(Account).where(Account.id == account_id))
+    ).scalar_one_or_none()
+    if not account:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="账号不存在")
+
+    was_online = bool(await get_redis().exists(session_key(account.id)))
+    await clear_session(account.id)
+    return APIResponse(
+        data={"was_online": was_online},
+        message="已强制下线" if was_online else "该账号当前不在线",
+    )
+
+
 @router.delete("/accounts/{account_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_account(
     account_id: int,
