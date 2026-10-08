@@ -741,3 +741,68 @@ async def fetch_reset_key(
     req.issued_key = None
     await db.commit()
     return APIResponse(data={"api_key": key}, message="请立即保存，仅显示一次")
+
+
+# ========== 设备端：模型清单 / 训练状态（X-API-Key） ==========
+@router.get("/{device_name}/model", response_model=APIResponse)
+async def get_device_model(
+    device_name: str,
+    db: AsyncSession = Depends(get_db),
+    device: Device = Depends(verify_device_auth),
+    minio: MinIOClient = Depends(get_minio_client),
+):
+    """设备端获取本设备当前模型清单（预签名下载链接）。
+
+    取 `models/<device>/svm.pkl` 对应的最新 ModelVersion。
+    """
+    if device.device_name != device_name:
+        raise HTTPException(status_code=403, detail="Device mismatch")
+
+    svm_key = f"models/{device_name}/svm.pkl"
+    mv = (
+        await db.execute(
+            select(ModelVersion)
+            .where(ModelVersion.minio_object_key == svm_key)
+            .order_by(ModelVersion.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if not mv:
+        return APIResponse(data={"has_model": False})
+
+    model_url = minio.get_presigned_url(mv.minio_object_key, expires_seconds=3600)
+    scaler_url = (
+        minio.get_presigned_url(mv.scaler_object_key, expires_seconds=3600)
+        if mv.scaler_object_key
+        else None
+    )
+    updated_at = mv.trained_at or mv.created_at
+    return APIResponse(data={
+        "has_model": True,
+        "version": mv.version,
+        "sha256": mv.sha256_hash,
+        "signature": mv.signature,
+        "model_url": model_url,
+        "scaler_url": scaler_url,
+        "updated_at": updated_at.isoformat() if updated_at else None,
+    })
+
+
+@router.get("/{device_name}/model-status", response_model=ModelUpdateStatus)
+async def get_device_model_status(
+    device_name: str,
+    db: AsyncSession = Depends(get_db),
+    device: Device = Depends(verify_device_auth),
+):
+    """设备端查询本设备当前模型更新（训练）状态，用于切换采集模式。"""
+    if device.device_name != device_name:
+        raise HTTPException(status_code=403, detail="Device mismatch")
+
+    job = await _latest_job(db, device_name)
+    version = None
+    if job and job.model_version_id:
+        mv = (
+            await db.execute(select(ModelVersion).where(ModelVersion.id == job.model_version_id))
+        ).scalar_one_or_none()
+        version = mv.version if mv else None
+    return _to_update_status(device_name, job, version)
