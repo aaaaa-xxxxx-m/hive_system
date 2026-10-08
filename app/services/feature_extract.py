@@ -6,7 +6,8 @@
 from typing import Union
 
 import numpy as np
-from python_speech_features import framesig, mfcc, powspec
+from python_speech_features import mfcc
+from python_speech_features.sigproc import framesig, powspec
 from scipy import signal
 from scipy.fftpack import dct
 

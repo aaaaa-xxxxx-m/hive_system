@@ -18,7 +18,6 @@ from app.schemas.schemas import (
 )
 from app.services.minio_client import get_minio_client, MinIOClient
 from app.services.model_service import get_model_manager, ModelManager
-from app.tasks.training_tasks import train_model_task
 from app.tasks.celery_app import celery_app
 
 router = APIRouter(prefix="/models", tags=["Models"])
