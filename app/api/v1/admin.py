@@ -173,8 +173,10 @@ async def list_download_jobs(
     query = select(DownloadJob)
     count_query = select(func.count(DownloadJob.id))
     if username:
-        query = query.where(DownloadJob.username == username)
-        count_query = count_query.where(DownloadJob.username == username)
+        # 模糊筛选：账号名包含该内容即匹配（转义 % / _ 以免被当通配符）
+        cond = DownloadJob.username.contains(username, autoescape=True)
+        query = query.where(cond)
+        count_query = count_query.where(cond)
 
     total = (await db.execute(count_query)).scalar()
     query = query.order_by(DownloadJob.created_at.desc()).offset((page - 1) * size).limit(size)
