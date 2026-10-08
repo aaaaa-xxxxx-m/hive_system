@@ -329,6 +329,10 @@ class AccountPasswordUpdate(BaseModel):
     password: str = Field(..., min_length=4, max_length=128)
 
 
+class AccountRoleUpdate(BaseModel):
+    role: AccountRole
+
+
 class AccountResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

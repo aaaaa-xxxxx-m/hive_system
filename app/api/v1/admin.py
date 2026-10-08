@@ -12,6 +12,7 @@ from app.schemas.schemas import (
     AccountCreate,
     AccountPasswordUpdate,
     AccountResponse,
+    AccountRoleUpdate,
     DownloadJobAdminItem,
     DownloadStats,
     PageResponse,
@@ -75,6 +76,36 @@ async def update_account_password(
     await db.refresh(account)
     # 改密后强制该账号下线
     await clear_session(account.id)
+    return AccountResponse.model_validate(account)
+
+
+@router.put("/accounts/{account_id}/role", response_model=AccountResponse)
+async def update_account_role(
+    account_id: int,
+    body: AccountRoleUpdate,
+    db: AsyncSession = Depends(get_db),
+    admin: Account = Depends(require_admin),
+):
+    """调整账号等级（普通用户 / 管理员）。"""
+    account = (
+        await db.execute(select(Account).where(Account.id == account_id))
+    ).scalar_one_or_none()
+    if not account:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="账号不存在")
+    if account.id == admin.id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="不能修改自己的角色")
+
+    new_role = AccountRole(body.role.value)
+    if account.role == AccountRole.ADMIN and new_role != AccountRole.ADMIN:
+        admin_count = (
+            await db.execute(select(func.count(Account.id)).where(Account.role == AccountRole.ADMIN))
+        ).scalar()
+        if (admin_count or 0) <= 1:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="不能移除最后一个管理员")
+
+    account.role = new_role
+    await db.commit()
+    await db.refresh(account)
     return AccountResponse.model_validate(account)
 
 
