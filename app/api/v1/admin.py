@@ -87,6 +87,7 @@ async def update_account_password(
     account_id: int,
     body: AccountPasswordUpdate,
     db: AsyncSession = Depends(get_db),
+    admin: Account = Depends(require_admin),
 ):
     """重置指定账号的密码（管理员操作，可作用于任意账号）。"""
     account = (
@@ -94,6 +95,12 @@ async def update_account_password(
     ).scalar_one_or_none()
     if not account:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="账号不存在")
+    # 超级管理员密码仅可由其本人修改
+    if account.is_superadmin and account.id != admin.id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="超级管理员密码仅可由超级管理员本人修改",
+        )
 
     account.password_hash = hash_password(body.password)
     await db.commit()
