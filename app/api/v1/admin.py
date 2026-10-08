@@ -1,26 +1,49 @@
 from typing import List, Optional
+import uuid
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import case, func, select
+from sqlalchemy import case, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.security import hash_password
-from app.models.models import Account, AccountRole, DownloadJob, DownloadJobStatus
+from app.models.models import (
+    Account,
+    AccountRole,
+    DataExportJob,
+    Device,
+    DownloadJob,
+    DownloadJobStatus,
+    ModelVersion,
+    TrainingJob,
+    TrainingJobStatus,
+)
 from app.schemas.schemas import (
+    DATA_CATEGORIES,
     AccountAdminItem,
     AccountCreate,
     AccountPasswordUpdate,
     AccountResponse,
     AccountRoleUpdate,
+    AdminDeviceItem,
+    DataExportCreate,
+    DataExportJobResponse,
+    DeviceDataUsage,
+    DeviceOrphanItem,
     DownloadJobAdminItem,
     DownloadStats,
     PageResponse,
+    APIResponse,
 )
 from app.api.deps import require_admin
 from app.core.redis_client import get_redis
 from app.core.session import clear_session, session_key
 from app.services.minio_client import get_minio_client, MinIOClient
+from app.services import device_data
+from app.tasks.export_tasks import export_device_data_task
+
+REQUIRED_POSITIVE_SAMPLES = 600
 
 router = APIRouter(prefix="/admin", tags=["Admin"], dependencies=[Depends(require_admin)])
 
@@ -266,3 +289,151 @@ async def delete_download_job(
 
     await db.delete(job)
     await db.commit()
+
+
+# ========== 设备管理 / 设备数据管理 ==========
+def _tjob_status(job: Optional[TrainingJob]) -> str:
+    if job is None:
+        return "idle"
+    return getattr(job.status, "value", job.status)
+
+
+@router.get("/devices", response_model=List[AdminDeviceItem])
+async def list_devices_admin(db: AsyncSession = Depends(get_db)):
+    """设备列表：模型更新状态 + 各分类数据占用。"""
+    devices = (await db.execute(select(Device).order_by(Device.device_name))).scalars().all()
+    items: List[AdminDeviceItem] = []
+    for d in devices:
+        job = (
+            await db.execute(
+                select(TrainingJob)
+                .where(TrainingJob.device_name == d.device_name)
+                .order_by(TrainingJob.created_at.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        version = None
+        if job and job.model_version_id:
+            version = (
+                await db.execute(select(ModelVersion.version).where(ModelVersion.id == job.model_version_id))
+            ).scalar_one_or_none()
+        u = await device_data.usage(db, d.device_name)
+        active = bool(
+            job
+            and job.status
+            in (TrainingJobStatus.WAITING, TrainingJobStatus.PENDING, TrainingJobStatus.RUNNING)
+        )
+        items.append(
+            AdminDeviceItem(
+                device_name=d.device_name,
+                status=d.status.value if d.status else None,
+                last_seen_at=d.last_seen_at,
+                model_update_status=_tjob_status(job),
+                progress=(job.progress or 0) if job else 0,
+                feature_count=(job.feature_count or 0) if job else 0,
+                required=REQUIRED_POSITIVE_SAMPLES,
+                model_version=version,
+                requested_at=job.requested_at if job else None,
+                has_active=active,
+                usage=DeviceDataUsage(**u),
+            )
+        )
+    return items
+
+
+@router.get("/device-data/orphans", response_model=List[DeviceOrphanItem])
+async def list_device_orphans(db: AsyncSession = Depends(get_db)):
+    """无对应设备的遗留数据（软提示）。"""
+    rows = await device_data.detect_orphans(db)
+    return [DeviceOrphanItem(device_name=n, usage=DeviceDataUsage(**u)) for n, u in rows]
+
+
+@router.post("/devices/{device_name}/data/export", response_model=APIResponse)
+async def export_device_data_admin(
+    device_name: str,
+    body: DataExportCreate,
+    db: AsyncSession = Depends(get_db),
+    admin: Account = Depends(require_admin),
+):
+    """按分类异步打包该设备数据 → zip（完成后经 /admin/data-export/{job_id} 取链接）。"""
+    cats = [c for c in (body.categories or list(DATA_CATEGORIES)) if c in DATA_CATEGORIES]
+    if not cats:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="请至少选择一个分类")
+
+    job = DataExportJob(
+        job_id=str(uuid.uuid4()),
+        device_name=device_name,
+        categories=cats,
+        username=admin.username,
+        status=DownloadJobStatus.PENDING,
+        progress=0,
+    )
+    db.add(job)
+    await db.commit()
+    await db.refresh(job)
+
+    export_device_data_task.delay(job.job_id, device_name, cats)
+    return APIResponse(data={"job_id": job.job_id}, message="Export job accepted")
+
+
+@router.get("/data-export/{job_id}", response_model=DataExportJobResponse)
+async def get_data_export_job(
+    job_id: str,
+    db: AsyncSession = Depends(get_db),
+    minio: MinIOClient = Depends(get_minio_client),
+):
+    job = (
+        await db.execute(select(DataExportJob).where(DataExportJob.job_id == job_id))
+    ).scalar_one_or_none()
+    if not job:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="导出任务不存在")
+
+    url = None
+    if job.status == DownloadJobStatus.COMPLETED and job.object_key:
+        url = minio.get_presigned_url(job.object_key, expires_seconds=3600)
+    return DataExportJobResponse(
+        job_id=job.job_id,
+        status=getattr(job.status, "value", job.status),
+        progress=job.progress or 0,
+        download_url=url,
+        error=job.error_message,
+    )
+
+
+@router.delete("/devices/{device_name}/data", response_model=APIResponse)
+async def clear_device_data_admin(
+    device_name: str,
+    categories: str = Query("", description="逗号分隔的分类；留空=全部"),
+    db: AsyncSession = Depends(get_db),
+):
+    """清除该设备在 MinIO + DB 中选定分类的数据。"""
+    picked = [c.strip() for c in categories.split(",") if c.strip()]
+    cats = [c for c in (picked or list(DATA_CATEGORIES)) if c in DATA_CATEGORIES]
+    if not cats:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="分类无效")
+    deleted = await device_data.clear_device_data(db, device_name, cats)
+    return APIResponse(data={"deleted": deleted}, message="已清除")
+
+
+@router.post("/devices/{device_name}/model-update/cancel", response_model=APIResponse)
+async def cancel_model_update(
+    device_name: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """取消该设备进行中的模型更新任务。"""
+    res = await db.execute(
+        update(TrainingJob)
+        .where(
+            TrainingJob.device_name == device_name,
+            TrainingJob.status.in_(
+                [TrainingJobStatus.WAITING, TrainingJobStatus.PENDING, TrainingJobStatus.RUNNING]
+            ),
+        )
+        .values(
+            status=TrainingJobStatus.CANCELLED,
+            error_message="管理员取消",
+            completed_at=datetime.utcnow(),
+        )
+    )
+    await db.commit()
+    return APIResponse(data={"cancelled": res.rowcount or 0})

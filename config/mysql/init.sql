@@ -138,6 +138,25 @@ CREATE TABLE IF NOT EXISTS download_jobs (
     KEY idx_account_id (account_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='数据下载任务记录';
 
+-- ========== 管理员数据导出任务 (按分类打包设备数据) ==========
+CREATE TABLE IF NOT EXISTS data_export_jobs (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '主键',
+    job_id CHAR(36) NOT NULL COMMENT '任务 UUID',
+    device_name VARCHAR(64) NOT NULL COMMENT '设备名',
+    categories JSON COMMENT '导出的分类键列表',
+    username VARCHAR(64) COMMENT '触发管理员',
+    status ENUM('pending', 'running', 'completed', 'failed') NOT NULL DEFAULT 'pending' COMMENT '任务状态',
+    progress INT UNSIGNED NOT NULL DEFAULT 0 COMMENT '进度百分比',
+    object_key VARCHAR(256) COMMENT 'MinIO 导出包键',
+    error_message TEXT COMMENT '错误信息',
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    completed_at TIMESTAMP NULL COMMENT '完成时间',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_export_job_id (job_id),
+    KEY idx_export_device (device_name),
+    KEY idx_export_status (status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='管理员设备数据导出任务';
+
 -- ========== 登录账号表 (普通用户 / 管理员) ==========
 CREATE TABLE IF NOT EXISTS accounts (
     id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '主键',

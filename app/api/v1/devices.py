@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Header
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, delete
+from sqlalchemy import select, func, delete, update
 from typing import List, Optional
 from datetime import datetime
 import hashlib
@@ -21,6 +21,7 @@ from app.schemas.schemas import (
     PageResponse, APIResponse,
 )
 from app.services.minio_client import get_minio_client, MinIOClient
+from app.services.device_data import has_leftover
 
 router = APIRouter(prefix="/devices", tags=["Devices"])
 
@@ -70,6 +71,13 @@ async def register_device(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Device {device_in.device_name} already exists",
+        )
+
+    # 名称存在遗留数据（历史设备被删除但数据保留）→ 阻止新增，需管理员清除
+    if await has_leftover(db, device_in.device_name):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="当前设备名有遗留数据，请联系管理员清除后重试",
         )
 
     api_key = device_in.api_key if hasattr(device_in, 'api_key') and device_in.api_key else generate_api_key()
@@ -272,6 +280,22 @@ async def delete_device(
     device = result.scalar_one_or_none()
     if not device:
         raise HTTPException(status_code=404, detail="Device not found")
+
+    # 停止该设备的模型更新任务（置 cancelled），但保留数据（数据仅管理员可清除）
+    await db.execute(
+        update(TrainingJob)
+        .where(
+            TrainingJob.device_name == device.device_name,
+            TrainingJob.status.in_(
+                [TrainingJobStatus.WAITING, TrainingJobStatus.PENDING, TrainingJobStatus.RUNNING]
+            ),
+        )
+        .values(
+            status=TrainingJobStatus.CANCELLED,
+            error_message="设备已删除，任务停止",
+            completed_at=datetime.utcnow(),
+        )
+    )
 
     await db.delete(device)
     await db.commit()

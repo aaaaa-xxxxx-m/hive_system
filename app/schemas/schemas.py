@@ -371,6 +371,51 @@ class DownloadStats(BaseModel):
     by_account: List[Dict[str, Any]]
 
 
+# ========== 管理端设备管理 / 数据管理 ==========
+# 分类键: audio(音频) models(模型) features(特征) inference(推理记录) training(训练记录) downloads(下载记录)
+DATA_CATEGORIES = ("audio", "models", "features", "inference", "training", "downloads")
+
+
+class DeviceDataUsage(BaseModel):
+    audio: int = 0
+    models: int = 0
+    features: int = 0
+    inference: int = 0
+    training: int = 0
+    downloads: int = 0
+
+
+class AdminDeviceItem(BaseModel):
+    device_name: str
+    status: Optional[str] = None
+    last_seen_at: Optional[datetime] = None
+    model_update_status: str = "idle"
+    progress: int = 0
+    feature_count: int = 0
+    required: int = 0
+    model_version: Optional[str] = None
+    requested_at: Optional[datetime] = None
+    has_active: bool = False
+    usage: DeviceDataUsage = Field(default_factory=DeviceDataUsage)
+
+
+class DeviceOrphanItem(BaseModel):
+    device_name: str
+    usage: DeviceDataUsage = Field(default_factory=DeviceDataUsage)
+
+
+class DataExportCreate(BaseModel):
+    categories: List[str] = Field(default_factory=list)
+
+
+class DataExportJobResponse(BaseModel):
+    job_id: str
+    status: str
+    progress: int = 0
+    download_url: Optional[str] = None
+    error: Optional[str] = None
+
+
 # ========== Model Update (按设备触发训练) ==========
 class ModelUpdateStatus(BaseModel):
     device_name: str

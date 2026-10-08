@@ -245,6 +245,31 @@ class DownloadJob(Base):
 
 
 # ============================================================
+# 管理员数据导出任务 (按分类打包设备数据)
+# ============================================================
+class DataExportJob(Base):
+    __tablename__ = "data_export_jobs"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    job_id: Mapped[str] = mapped_column(String(36), unique=True, nullable=False)
+    device_name: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    categories: Mapped[Optional[Any]] = mapped_column(JSON)
+    username: Mapped[Optional[str]] = mapped_column(String(64))
+    status: Mapped[DownloadJobStatus] = mapped_column(
+        _enum(DownloadJobStatus, "download_job_status"),
+        default=DownloadJobStatus.PENDING,
+        nullable=False,
+    )
+    progress: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    object_key: Mapped[Optional[str]] = mapped_column(String(256))
+    error_message: Mapped[Optional[str]] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), nullable=False
+    )
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+
+
+# ============================================================
 # 登录账号 (普通用户 / 管理员)
 # ============================================================
 class Account(Base):

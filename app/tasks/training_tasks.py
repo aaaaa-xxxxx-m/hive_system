@@ -358,6 +358,17 @@ async def _check_and_train(device_name: str):
         model = SVC(kernel="rbf", C=1.0, gamma="scale", class_weight="balanced",
                     probability=True, random_state=42).fit(X_scaled, y)
 
+        # 写回前复核：训练期间若任务被取消（如设备被删除），中止，不产出模型
+        async with Session() as db:
+            cur_status = (
+                await db.execute(
+                    select(TrainingJob.status).where(TrainingJob.job_id == job_id)
+                )
+            ).scalar_one_or_none()
+        if cur_status is None or cur_status == TrainingJobStatus.CANCELLED:
+            logger.warning(f"[train] {device_name}: cancelled during training, abort write-back")
+            return "cancelled"
+
         m_buf = io.BytesIO(); joblib.dump(model, m_buf, compress=3); model_bytes = m_buf.getvalue()
         s_buf = io.BytesIO(); joblib.dump(scaler, s_buf, compress=3); scaler_bytes = s_buf.getvalue()
 

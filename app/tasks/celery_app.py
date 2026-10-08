@@ -15,6 +15,7 @@ celery_app = Celery(
         "app.tasks.inference_tasks",
         "app.tasks.cleanup_tasks",
         "app.tasks.download_tasks",
+        "app.tasks.export_tasks",
     ],
 )
 
@@ -37,6 +38,7 @@ celery_app.conf.update(
         "app.tasks.cleanup_tasks.*": {"queue": "cleanup"},
         # 导出任务走 inference 队列 (worker 已消费该队列, 免改 compose)
         "app.tasks.download_tasks.*": {"queue": "inference"},
+        "app.tasks.export_tasks.*": {"queue": "inference"},
     },
     beat_schedule={
         "cleanup-old-raw-features": {
