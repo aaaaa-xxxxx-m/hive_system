@@ -5,14 +5,19 @@ from typing import List, Optional
 from datetime import datetime
 import hashlib
 import secrets
+import uuid
 
 from app.core.database import get_db
-from app.models.models import Account, Device, InferenceResult, DeviceStatus, InferenceLabel
+from app.models.models import (
+    Account, Device, InferenceResult, DeviceStatus, InferenceLabel,
+    TrainingJob, TrainingJobStatus, ModelVersion,
+)
 from app.api.deps import get_current_account, require_viewer
 from app.schemas.schemas import (
     DeviceCreate, DeviceUpdate, DeviceResponse, DeviceWithDetails, DeviceSummary,
     DeviceDownloadCatalog,
     InferenceResultCreate, InferenceResultResponse, DeviceRecordResponse,
+    ModelUpdateStatus, ModelUpdateRecord,
     PageResponse, APIResponse,
 )
 from app.services.minio_client import get_minio_client, MinIOClient
@@ -384,15 +389,20 @@ async def get_presigned_upload_url(
     device_id: int,
     filename: str = Query(..., description="文件名"),
     content_type: str = Query("audio/wav", description="MIME 类型"),
+    kind: str = Query("audio", description="audio | feature"),
     expires: int = Query(3600, ge=60, le=86400, description="过期时间(秒)"),
     device: Device = Depends(verify_device_auth),
     minio: MinIOClient = Depends(get_minio_client),
 ):
-    """获取预签名上传 URL，设备直传 MinIO"""
+    """获取预签名上传 URL，设备直传 MinIO (kind=feature 走 features/ 前缀)"""
     if device.id != device_id:
         raise HTTPException(status_code=403, detail="Device ID mismatch")
 
-    object_key = f"audio/{datetime.utcnow().strftime('%Y/%m/%d')}/{device.device_name}/{filename}"
+    if kind == "feature":
+        prefix = f"features/{device.device_name}/{datetime.utcnow().strftime('%Y%m%dT%H%M%S')}_{filename}"
+        object_key = prefix
+    else:
+        object_key = f"audio/{datetime.utcnow().strftime('%Y/%m/%d')}/{device.device_name}/{filename}"
 
     upload_url = minio.get_presigned_put_url(object_key, expires_seconds=expires)
 
@@ -419,3 +429,149 @@ async def get_presigned_download_url(
 
     download_url = minio.get_presigned_url(object_key, expires_seconds=expires)
     return APIResponse(data={"download_url": download_url, "expires_in": expires})
+
+
+# ========== 按设备触发模型更新 (MinIO 交换站) ==========
+REQUIRED_POSITIVE_SAMPLES = 600
+
+
+def _job_status_value(job: TrainingJob) -> str:
+    return job.status.value if hasattr(job.status, "value") else str(job.status)
+
+
+def _to_update_status(
+    device_name: str, job: Optional[TrainingJob], version: Optional[str] = None
+) -> ModelUpdateStatus:
+    if job is None:
+        return ModelUpdateStatus(device_name=device_name, status="idle", required=REQUIRED_POSITIVE_SAMPLES)
+    active = job.status in (
+        TrainingJobStatus.WAITING,
+        TrainingJobStatus.PENDING,
+        TrainingJobStatus.RUNNING,
+    )
+    return ModelUpdateStatus(
+        device_name=device_name,
+        status=_job_status_value(job),
+        progress=job.progress or 0,
+        feature_count=job.feature_count or 0,
+        required=REQUIRED_POSITIVE_SAMPLES,
+        requested_at=job.requested_at,
+        updated_at=job.completed_at or job.started_at or job.created_at,
+        model_version=version,
+        error=job.error_message,
+        has_active=active,
+    )
+
+
+async def _latest_job(db: AsyncSession, device_name: str) -> Optional[TrainingJob]:
+    return (
+        await db.execute(
+            select(TrainingJob)
+            .where(TrainingJob.device_name == device_name)
+            .order_by(TrainingJob.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
+
+@router.post("/{device_name}/model-update", response_model=ModelUpdateStatus)
+async def request_model_update(
+    device_name: str,
+    db: AsyncSession = Depends(get_db),
+    _account: Account = Depends(get_current_account),
+):
+    """为该设备请求更新模型（重复点击忽略）。"""
+    device = (
+        await db.execute(select(Device).where(Device.device_name == device_name))
+    ).scalar_one_or_none()
+    if not device:
+        raise HTTPException(status_code=404, detail="Device not found")
+
+    active = (
+        await db.execute(
+            select(TrainingJob)
+            .where(
+                TrainingJob.device_name == device_name,
+                TrainingJob.status.in_(
+                    [TrainingJobStatus.WAITING, TrainingJobStatus.PENDING, TrainingJobStatus.RUNNING]
+                ),
+            )
+            .order_by(TrainingJob.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if active:
+        return _to_update_status(device_name, active)
+
+    job = TrainingJob(
+        job_id=str(uuid.uuid4()),
+        device_name=device_name,
+        requested_at=datetime.utcnow(),
+        status=TrainingJobStatus.WAITING,
+        progress=0,
+        feature_count=0,
+    )
+    db.add(job)
+    await db.commit()
+    await db.refresh(job)
+
+    from app.tasks.training_tasks import check_and_train_device
+
+    check_and_train_device.delay(device_name)
+
+    return _to_update_status(device_name, job)
+
+
+@router.get("/{device_name}/model-update", response_model=ModelUpdateStatus)
+async def get_model_update_status(
+    device_name: str,
+    db: AsyncSession = Depends(get_db),
+    _account: Account = Depends(get_current_account),
+):
+    job = await _latest_job(db, device_name)
+    version = None
+    if job and job.model_version_id:
+        mv = (
+            await db.execute(select(ModelVersion).where(ModelVersion.id == job.model_version_id))
+        ).scalar_one_or_none()
+        version = mv.version if mv else None
+    return _to_update_status(device_name, job, version)
+
+
+@router.get("/{device_name}/model-update/records", response_model=List[ModelUpdateRecord])
+async def get_model_update_records(
+    device_name: str,
+    limit: int = Query(20, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+    _account: Account = Depends(get_current_account),
+):
+    jobs = (
+        await db.execute(
+            select(TrainingJob)
+            .where(TrainingJob.device_name == device_name)
+            .order_by(TrainingJob.created_at.desc())
+            .limit(limit)
+        )
+    ).scalars().all()
+
+    ids = [j.model_version_id for j in jobs if j.model_version_id]
+    versions: dict = {}
+    if ids:
+        rows = (
+            await db.execute(select(ModelVersion.id, ModelVersion.version).where(ModelVersion.id.in_(ids)))
+        ).all()
+        versions = {r[0]: r[1] for r in rows}
+
+    return [
+        ModelUpdateRecord(
+            job_id=j.job_id,
+            status=_job_status_value(j),
+            progress=j.progress or 0,
+            feature_count=j.feature_count or 0,
+            requested_at=j.requested_at,
+            completed_at=j.completed_at,
+            model_version=versions.get(j.model_version_id),
+            error=j.error_message,
+        )
+        for j in jobs
+    ]

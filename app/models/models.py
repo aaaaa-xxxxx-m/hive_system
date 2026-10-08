@@ -59,6 +59,7 @@ class ModelStatus(str, enum.Enum):
 
 class TrainingJobStatus(str, enum.Enum):
     PENDING = "pending"
+    WAITING = "waiting"
     RUNNING = "running"
     COMPLETED = "completed"
     FAILED = "failed"
@@ -195,6 +196,9 @@ class TrainingJob(Base):
     model_version_id: Mapped[Optional[int]] = mapped_column(
         BigInteger, ForeignKey("model_versions.id", ondelete="SET NULL")
     )
+    device_name: Mapped[Optional[str]] = mapped_column(String(64))
+    requested_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    feature_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     status: Mapped[TrainingJobStatus] = mapped_column(
         _enum(TrainingJobStatus, "training_job_status"),
         default=TrainingJobStatus.PENDING,

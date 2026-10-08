@@ -147,6 +147,20 @@ class MinIOClient:
             logger.error(f"List files failed: {e}")
             return []
 
+    def list_objects_meta(self, prefix: str = "", recursive: bool = True) -> List[dict]:
+        """列出对象及其元信息（name / size / last_modified）。"""
+        out: List[dict] = []
+        try:
+            for obj in self.client.list_objects(self.bucket, prefix=prefix, recursive=recursive):
+                out.append({
+                    "name": obj.object_name,
+                    "size": getattr(obj, "size", 0),
+                    "last_modified": getattr(obj, "last_modified", None),
+                })
+        except S3Error as e:
+            logger.error(f"List objects meta failed: {e}")
+        return out
+
     def get_presigned_url(
         self,
         object_key: str,

@@ -128,32 +128,8 @@ async def register_model_version(
 
 
 # ========== 触发模型训练 ==========
-@router.post("/train", response_model=TrainingJobResponse, status_code=status.HTTP_202_ACCEPTED)
-async def start_training(
-    job_in: TrainingJobCreate,
-    db: AsyncSession = Depends(get_db),
-):
-    import uuid
-    job_id = str(uuid.uuid4())
-
-    training_job = TrainingJob(
-        job_id=job_id,
-        status=TrainingJobStatus.PENDING,
-        config=job_in.config.model_dump(),
-    )
-    db.add(training_job)
-    await db.commit()
-    await db.refresh(training_job)
-
-    # 异步触发训练任务
-    train_model_task.delay(
-        job_id=job_id,
-        config=job_in.config.model_dump(),
-        positive_keys=job_in.positive_keys,
-        negative_keys=job_in.negative_keys,
-    )
-
-    return TrainingJobResponse.model_validate(training_job)
+# 已弃用：改为「按设备触发」——见 devices.py 的 POST /devices/{device_name}/model-update
+# （旧的 keys 方式训练入口已移除）
 
 
 # ========== 训练任务列表 ==========

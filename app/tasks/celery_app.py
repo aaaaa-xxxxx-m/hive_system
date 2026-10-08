@@ -51,6 +51,10 @@ celery_app.conf.update(
             "task": "app.tasks.cleanup_tasks.check_device_heartbeat",
             "schedule": crontab(minute="*/5"),
         },
+        "scan-waiting-model-updates": {
+            "task": "app.tasks.training_tasks.scan_waiting_model_updates",
+            "schedule": crontab(minute="*/20"),
+        },
     },
 )
 

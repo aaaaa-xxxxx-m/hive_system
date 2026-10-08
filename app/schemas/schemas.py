@@ -34,6 +34,7 @@ class ModelStatus(str, Enum):
 
 class TrainingJobStatus(str, Enum):
     PENDING = "pending"
+    WAITING = "waiting"
     RUNNING = "running"
     COMPLETED = "completed"
     FAILED = "failed"
@@ -353,6 +354,31 @@ class DownloadStats(BaseModel):
     completed_jobs: int
     failed_jobs: int
     by_account: List[Dict[str, Any]]
+
+
+# ========== Model Update (按设备触发训练) ==========
+class ModelUpdateStatus(BaseModel):
+    device_name: str
+    status: str  # idle | waiting | running | completed | failed | cancelled
+    progress: int = 0
+    feature_count: int = 0
+    required: int = 0
+    requested_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+    model_version: Optional[str] = None
+    error: Optional[str] = None
+    has_active: bool = False
+
+
+class ModelUpdateRecord(BaseModel):
+    job_id: str
+    status: str
+    progress: int
+    feature_count: int
+    requested_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    model_version: Optional[str] = None
+    error: Optional[str] = None
 
 
 # ========== Common Response ==========
