@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.security import decode_token
+from app.core.session import validate_session
 from app.models.models import Account, AccountRole
 
 
@@ -18,13 +19,18 @@ async def get_current_account(
     token = authorization.split(" ", 1)[1].strip()
     payload = decode_token(token)
     subject = payload.get("sub") if payload else None
-    if not subject:
+    if not subject or payload.get("role") == "guest":
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="登录已失效")
     account = (
         await db.execute(select(Account).where(Account.username == subject))
     ).scalar_one_or_none()
     if not account or not account.enabled:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="账号不可用")
+    if not await validate_session(account.id, payload.get("jti")):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="登录状态已失效（会话超时或账号已在其他位置登录）",
+        )
     return account
 
 
@@ -52,4 +58,9 @@ async def require_viewer(
     ).scalar_one_or_none()
     if not account or not account.enabled:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="账号不可用")
+    if not await validate_session(account.id, payload.get("jti")):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="登录状态已失效（会话超时或账号已在其他位置登录）",
+        )
     return account

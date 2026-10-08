@@ -64,6 +64,8 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: str = "HS256"
     JWT_EXPIRE_MINUTES: int = 60 * 24 * 7  # 7 days
     API_KEY_SALT: str
+    # 单账号单会话：空闲多久（分钟）自动释放登录态
+    SESSION_IDLE_MINUTES: int = 30
 
     # 初始管理员 (accounts 表为空时自动创建)
     BOOTSTRAP_ADMIN_USER: str = "admin"

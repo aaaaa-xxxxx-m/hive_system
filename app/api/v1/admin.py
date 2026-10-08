@@ -16,6 +16,7 @@ from app.schemas.schemas import (
     PageResponse,
 )
 from app.api.deps import require_admin
+from app.core.session import clear_session
 from app.services.minio_client import get_minio_client, MinIOClient
 
 router = APIRouter(prefix="/admin", tags=["Admin"], dependencies=[Depends(require_admin)])
@@ -64,6 +65,8 @@ async def update_account_password(
     account.password_hash = hash_password(body.password)
     await db.commit()
     await db.refresh(account)
+    # 改密后强制该账号下线
+    await clear_session(account.id)
     return AccountResponse.model_validate(account)
 
 
@@ -116,6 +119,8 @@ async def delete_account(
 
     await db.delete(account)
     await db.commit()
+    # 删号后清除其登录会话
+    await clear_session(account_id)
 
 
 # ========== 数据下载日志 ==========
