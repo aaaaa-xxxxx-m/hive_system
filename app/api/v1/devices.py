@@ -10,7 +10,7 @@ import uuid
 from app.core.database import get_db
 from app.models.models import (
     Account, Device, InferenceResult, DeviceStatus, InferenceLabel,
-    TrainingJob, TrainingJobStatus, ModelVersion,
+    TrainingJob, TrainingJobStatus, ModelVersion, KeyResetRequest, KeyResetStatus,
 )
 from app.api.deps import get_current_account, require_viewer
 from app.schemas.schemas import (
@@ -18,6 +18,7 @@ from app.schemas.schemas import (
     DeviceDownloadCatalog,
     InferenceResultCreate, InferenceResultResponse, DeviceRecordResponse,
     ModelUpdateStatus, ModelUpdateRecord,
+    KeyResetCreate, KeyResetRequestResponse,
     PageResponse, APIResponse,
 )
 from app.services.minio_client import get_minio_client, MinIOClient
@@ -638,3 +639,105 @@ async def cancel_model_update_user(
         ).scalar_one_or_none()
         version = mv.version if mv else None
     return _to_update_status(device_name, job, version)
+
+
+# ========== 设备密钥重置申请（用户：忘记 API Key 时向管理员申请） ==========
+def _kr_response(req: KeyResetRequest) -> KeyResetRequestResponse:
+    return KeyResetRequestResponse(
+        id=req.id,
+        device_name=req.device_name,
+        status=getattr(req.status, "value", req.status),
+        has_new_key=bool(req.issued_key),
+        reason=req.reason,
+        created_at=req.created_at,
+        handled_at=req.handled_at,
+    )
+
+
+@router.post("/{device_name}/key-reset-request", response_model=KeyResetRequestResponse)
+async def create_key_reset_request(
+    device_name: str,
+    body: Optional[KeyResetCreate] = None,
+    db: AsyncSession = Depends(get_db),
+    account: Account = Depends(get_current_account),
+):
+    """提交密钥重置申请（已有待处理申请则返回该申请）。"""
+    device = (
+        await db.execute(select(Device).where(Device.device_name == device_name))
+    ).scalar_one_or_none()
+    if not device:
+        raise HTTPException(status_code=404, detail="Device not found")
+
+    pending = (
+        await db.execute(
+            select(KeyResetRequest)
+            .where(
+                KeyResetRequest.device_name == device_name,
+                KeyResetRequest.status == KeyResetStatus.PENDING,
+            )
+            .order_by(KeyResetRequest.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if pending:
+        return _kr_response(pending)
+
+    req = KeyResetRequest(
+        device_name=device_name,
+        requester_id=account.id,
+        requester_username=account.username,
+        status=KeyResetStatus.PENDING,
+        reason=(body.reason if body else None),
+    )
+    db.add(req)
+    await db.commit()
+    await db.refresh(req)
+    return _kr_response(req)
+
+
+@router.get("/{device_name}/key-reset-request", response_model=Optional[KeyResetRequestResponse])
+async def get_key_reset_request(
+    device_name: str,
+    db: AsyncSession = Depends(get_db),
+    account: Account = Depends(get_current_account),
+):
+    req = (
+        await db.execute(
+            select(KeyResetRequest)
+            .where(
+                KeyResetRequest.device_name == device_name,
+                KeyResetRequest.requester_id == account.id,
+            )
+            .order_by(KeyResetRequest.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    return _kr_response(req) if req else None
+
+
+@router.post("/{device_name}/key-reset-request/fetch-key", response_model=APIResponse)
+async def fetch_reset_key(
+    device_name: str,
+    db: AsyncSession = Depends(get_db),
+    account: Account = Depends(get_current_account),
+):
+    """取用已批准的新密钥（仅一次，取后即清空）。"""
+    req = (
+        await db.execute(
+            select(KeyResetRequest)
+            .where(
+                KeyResetRequest.device_name == device_name,
+                KeyResetRequest.requester_id == account.id,
+                KeyResetRequest.status == KeyResetStatus.APPROVED,
+                KeyResetRequest.issued_key.isnot(None),
+            )
+            .order_by(KeyResetRequest.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if not req:
+        raise HTTPException(status_code=404, detail="暂无可取用的新密钥")
+    key = req.issued_key
+    req.issued_key = None
+    await db.commit()
+    return APIResponse(data={"api_key": key}, message="请立即保存，仅显示一次")

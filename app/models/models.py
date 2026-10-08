@@ -84,6 +84,12 @@ class RawFeatureLabel(str, enum.Enum):
     UNKNOWN = "unknown"
 
 
+class KeyResetStatus(str, enum.Enum):
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+
+
 def _enum(enum_cls: type, name: str) -> SAEnum:
     """构造以枚举 value 落库的 SQLAlchemy Enum 列。"""
     return SAEnum(enum_cls, name=name, values_callable=lambda e: [m.value for m in e])
@@ -288,6 +294,31 @@ class Account(Base):
         DateTime, server_default=func.now(), nullable=False
     )
     last_login_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+
+
+# ============================================================
+# 设备密钥重置申请 (用户忘记 API Key 时向管理员申请)
+# ============================================================
+class KeyResetRequest(Base):
+    __tablename__ = "key_reset_requests"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    device_name: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    requester_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    requester_username: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[KeyResetStatus] = mapped_column(
+        _enum(KeyResetStatus, "key_reset_status"),
+        default=KeyResetStatus.PENDING,
+        nullable=False,
+    )
+    # 批准后暂存明文新钥，供申请人在前端取一次后清空
+    issued_key: Mapped[Optional[str]] = mapped_column(String(128))
+    reason: Mapped[Optional[str]] = mapped_column(Text)
+    handled_by: Mapped[Optional[str]] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), nullable=False
+    )
+    handled_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
 
 
 # ============================================================

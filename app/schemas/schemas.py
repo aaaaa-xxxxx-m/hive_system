@@ -112,6 +112,26 @@ class DeviceDownloadCatalog(BaseModel):
     record_count: int = 0
 
 
+# ========== 设备密钥重置申请 ==========
+class KeyResetCreate(BaseModel):
+    reason: Optional[str] = Field(None, max_length=500)
+
+
+class KeyResetRequestResponse(BaseModel):
+    id: int
+    device_name: str
+    status: str
+    has_new_key: bool = False
+    reason: Optional[str] = None
+    created_at: datetime
+    handled_at: Optional[datetime] = None
+
+
+class KeyResetRequestAdminItem(KeyResetRequestResponse):
+    requester: str
+    handled_by: Optional[str] = None
+
+
 # ========== Device Record Schema (方案 C: 音频与指标合并后的每事件记录) ==========
 class DeviceRecordResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)

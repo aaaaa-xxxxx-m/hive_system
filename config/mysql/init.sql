@@ -171,6 +171,23 @@ CREATE TABLE IF NOT EXISTS accounts (
     UNIQUE KEY uk_username (username)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='登录账号';
 
+-- ========== 设备密钥重置申请 (用户忘记 API Key) ==========
+CREATE TABLE IF NOT EXISTS key_reset_requests (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '主键',
+    device_name VARCHAR(64) NOT NULL COMMENT '设备名',
+    requester_id BIGINT UNSIGNED NOT NULL COMMENT '申请账号 ID',
+    requester_username VARCHAR(64) NOT NULL COMMENT '申请账号名',
+    status ENUM('pending', 'approved', 'rejected') NOT NULL DEFAULT 'pending' COMMENT '状态',
+    issued_key VARCHAR(128) COMMENT '批准后暂存的明文新钥(取用后清空)',
+    reason TEXT COMMENT '申请说明',
+    handled_by VARCHAR(64) COMMENT '处理管理员',
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '申请时间',
+    handled_at TIMESTAMP NULL COMMENT '处理时间',
+    PRIMARY KEY (id),
+    KEY idx_kr_device (device_name),
+    KEY idx_kr_status (status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='设备密钥重置申请';
+
 -- ========== 特征数据表 (原始特征, 仅保留最近 30 天) ==========
 CREATE TABLE IF NOT EXISTS raw_features (
     id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '主键',

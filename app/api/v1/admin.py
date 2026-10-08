@@ -15,6 +15,8 @@ from app.models.models import (
     Device,
     DownloadJob,
     DownloadJobStatus,
+    KeyResetRequest,
+    KeyResetStatus,
     ModelVersion,
     TrainingJob,
     TrainingJobStatus,
@@ -33,11 +35,13 @@ from app.schemas.schemas import (
     DeviceOrphanItem,
     DownloadJobAdminItem,
     DownloadStats,
+    KeyResetRequestAdminItem,
     ModelUpdateRecord,
     PageResponse,
     APIResponse,
 )
 from app.api.deps import require_admin
+from app.api.v1.devices import generate_api_key, hash_api_key
 from app.core.redis_client import get_redis
 from app.core.session import clear_session, session_key
 from app.services.minio_client import get_minio_client, MinIOClient
@@ -550,3 +554,82 @@ async def admin_clear_device_update_records(
     await db.execute(delete(TrainingJob).where(TrainingJob.device_name == device_name))
     await db.commit()
     return APIResponse(data={"deleted": int(before)}, message="已清空更新日志")
+
+
+# ========== 设备密钥重置申请（管理端） ==========
+@router.get("/key-reset-requests", response_model=List[KeyResetRequestAdminItem])
+async def list_key_reset_requests(
+    status_filter: Optional[str] = Query(None, alias="status"),
+    db: AsyncSession = Depends(get_db),
+):
+    q = select(KeyResetRequest)
+    if status_filter:
+        q = q.where(KeyResetRequest.status == KeyResetStatus(status_filter))
+    q = q.order_by(KeyResetRequest.created_at.desc()).limit(200)
+    rows = (await db.execute(q)).scalars().all()
+    return [
+        KeyResetRequestAdminItem(
+            id=r.id,
+            device_name=r.device_name,
+            status=getattr(r.status, "value", r.status),
+            has_new_key=bool(r.issued_key),
+            reason=r.reason,
+            created_at=r.created_at,
+            handled_at=r.handled_at,
+            requester=r.requester_username,
+            handled_by=r.handled_by,
+        )
+        for r in rows
+    ]
+
+
+@router.post("/key-reset-requests/{req_id}/approve", response_model=APIResponse)
+async def approve_key_reset(
+    req_id: int,
+    db: AsyncSession = Depends(get_db),
+    admin: Account = Depends(require_admin),
+):
+    """批准申请：生成新密钥并重置设备（新钥由申请人一次性取用）。"""
+    req = (
+        await db.execute(select(KeyResetRequest).where(KeyResetRequest.id == req_id))
+    ).scalar_one_or_none()
+    if not req:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="申请不存在")
+    if req.status != KeyResetStatus.PENDING:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="该申请已处理")
+
+    device = (
+        await db.execute(select(Device).where(Device.device_name == req.device_name))
+    ).scalar_one_or_none()
+    if not device:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="设备不存在或已删除")
+
+    new_key = generate_api_key()
+    device.api_key_hash = hash_api_key(new_key)
+    req.status = KeyResetStatus.APPROVED
+    req.issued_key = new_key
+    req.handled_by = admin.username
+    req.handled_at = datetime.utcnow()
+    await db.commit()
+    return APIResponse(message="已批准，申请人可在前端查看新密钥")
+
+
+@router.post("/key-reset-requests/{req_id}/reject", response_model=APIResponse)
+async def reject_key_reset(
+    req_id: int,
+    db: AsyncSession = Depends(get_db),
+    admin: Account = Depends(require_admin),
+):
+    req = (
+        await db.execute(select(KeyResetRequest).where(KeyResetRequest.id == req_id))
+    ).scalar_one_or_none()
+    if not req:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="申请不存在")
+    if req.status != KeyResetStatus.PENDING:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="该申请已处理")
+
+    req.status = KeyResetStatus.REJECTED
+    req.handled_by = admin.username
+    req.handled_at = datetime.utcnow()
+    await db.commit()
+    return APIResponse(message="已拒绝")
