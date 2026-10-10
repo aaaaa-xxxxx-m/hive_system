@@ -3,7 +3,7 @@ import asyncio
 import csv
 import io
 import zipfile
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 from celery import shared_task
 from celery.utils.log import get_task_logger
@@ -32,8 +32,16 @@ def _enum_val(v) -> str:
     return getattr(v, "value", v) if v is not None else ""
 
 
+LOCAL_TZ = timezone(timedelta(hours=8))  # 北京时间
+
+
 def _iso(v) -> str:
-    return v.isoformat() if v else ""
+    """UTC 时间 → 北京时间字符串。"""
+    if not v:
+        return ""
+    if v.tzinfo is None:
+        v = v.replace(tzinfo=timezone.utc)
+    return v.astimezone(LOCAL_TZ).strftime("%Y-%m-%d %H:%M:%S")
 
 
 async def _save(Session, job_id: str, **values):
@@ -95,7 +103,7 @@ async def _export(job_id: str):
                     ).scalars().all()
                     buf = io.StringIO()
                     w = csv.writer(buf)
-                    w.writerow(["时间", "温度(℃)", "湿度(%)",
+                    w.writerow(["时间(北京时间)", "温度(℃)", "湿度(%)",
                                 "失王概率", "标签", "置信度", "模型版本", "音频键"])
                     for r in rows:
                         w.writerow([_iso(r.recorded_at), r.temperature, r.humidity,

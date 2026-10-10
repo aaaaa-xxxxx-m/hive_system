@@ -2,7 +2,7 @@ import asyncio
 import csv
 import io
 import zipfile
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 from celery import shared_task
 from celery.utils.log import get_task_logger
@@ -27,6 +27,18 @@ async def _save(Session, job_id: str, **values):
 
 def _label_value(label) -> str:
     return getattr(label, "value", label)
+
+
+# 数据库中的时间为 UTC；导出给用户看的一律转成北京时间（固定 UTC+8，无夏令时）
+LOCAL_TZ = timezone(timedelta(hours=8))
+
+
+def _local_str(dt) -> str:
+    if dt is None:
+        return ""
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(LOCAL_TZ).strftime("%Y-%m-%d %H:%M:%S")
 
 
 async def _export(job_id: str):
@@ -59,7 +71,7 @@ async def _export(job_id: str):
         metrics = io.StringIO()
         writer = csv.writer(metrics)
         writer.writerow([
-            "序号", "文件名", "时间", "温度(℃)", "湿度(%)",
+            "序号", "文件名", "时间(北京时间)", "温度(℃)", "湿度(%)",
             "失王概率", "标签", "置信度", "模型版本", "原始音频键",
         ])
 
@@ -78,7 +90,7 @@ async def _export(job_id: str):
                     logger.warning(f"audio missing: {r.audio_object_key}: {e}")
                 writer.writerow([
                     idx, f"{seq}.wav",
-                    r.recorded_at.isoformat() if r.recorded_at else "",
+                    _local_str(r.recorded_at),
                     r.temperature, r.humidity,
                     r.probability_no_queen, _label_value(r.label), r.confidence,
                     r.model_version, r.audio_object_key,
