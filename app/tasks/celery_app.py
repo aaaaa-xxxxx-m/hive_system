@@ -53,9 +53,11 @@ celery_app.conf.update(
             "task": "app.tasks.cleanup_tasks.check_device_heartbeat",
             "schedule": crontab(minute="*/5"),
         },
+        # 采集进度近实时刷新：设备采集周期约 30s，这里每 30s 重扫一次 feature_count，
+        # 使前端「等待数据 X/600」与实际采集速度同步（原为 */20 分钟，明显滞后）。
         "scan-waiting-model-updates": {
             "task": "app.tasks.training_tasks.scan_waiting_model_updates",
-            "schedule": crontab(minute="*/20"),
+            "schedule": 30.0,
         },
     },
 )
