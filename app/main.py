@@ -107,7 +107,8 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
-    allow_credentials=True,
+    # 鉴权走 Authorization 头（Bearer），不依赖 Cookie，故关闭 credentials
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )

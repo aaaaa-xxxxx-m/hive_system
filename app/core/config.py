@@ -88,8 +88,8 @@ class Settings(BaseSettings):
     # Monitoring
     PROMETHEUS_METRICS_PATH: str = "/metrics"
 
-    # CORS
-    CORS_ORIGINS: list[str] = ["*"]
+    # CORS：仅允许本站域名（前端与 API 同源，跨域白名单收紧）
+    CORS_ORIGINS: list[str] = ["https://hivesystem.top", "https://www.hivesystem.top"]
 
     # Pagination
     DEFAULT_PAGE_SIZE: int = 20
