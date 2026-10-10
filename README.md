@@ -27,11 +27,11 @@
 
 ```
            浏览器 (Vue 3 单页应用)
-                     │  HTTP :80 / HTTPS :443
+                     │  HTTPS :443（http 自动跳转到 https）
              ┌───────▼────────┐
-             │  bee-nginx     │  反向代理 + 静态前端托管
+             │  bee-nginx     │  反向代理 + 静态前端 + TLS 终结
              └───┬────────┬───┘
-      /api/v1    │        │  /        直传 9000 (预签名)
+      /api/v1    │        │  s3.hivesystem.top（预签名直传）
      ┌───────────▼──┐  ┌───▼────────┐
      │ bee-backend  │  │  bee-minio │◄──── 边缘设备 PUT/GET
      │  (FastAPI)   │  │  对象存储   │      (音频/特征/模型)
@@ -45,6 +45,8 @@
         └── 结构化数据(温湿度/推理/账号/日志)
 ```
 
+- **对外接入**：站点以 `hivesystem.top`（含 `www`）对外，对象存储以 `s3.hivesystem.top` 经 Nginx 反代；
+  证书由 acme.sh（Let's Encrypt）签发并自动续期。**MinIO 9000 端口不直接对外**。
 - **对象存储 (MinIO)**：`audio/<日期>/<设备>/`、`features/<设备>/`、`models/<设备>/`、`exports/<设备>/`
 - **关系库 (MySQL)**：设备、推理结果、模型版本、训练任务、下载任务、账号、审计、密钥申请等
 
@@ -53,7 +55,7 @@
 ## 功能特性
 
 **数据接入与存储**
-- 边缘设备经 `X-API-Key` 鉴权上报推理结果 + 环境指标（温湿度 / 电池电压 / 信号强度），一次入库
+- 边缘设备经 `X-API-Key` 鉴权上报推理结果 + 环境指标（温湿度），一次入库
 - 音频、特征（`.npy`）、模型（`.pkl`）等大文件由设备经**预签名 URL 直传 MinIO**，后端不中转带宽
 - 提供 `/health`、`/ready` 健康检查
 
@@ -64,7 +66,7 @@
 
 **模型训练与下发**
 - 按设备触发：累积 600 条设备正样本 + 服务器预置 600 条失王负样本 → 训练 `SVM + StandardScaler`
-- 全程 **Celery 异步**执行，写回 MinIO `models/<设备>/`，设备侧按对象修改时间拉取
+- 全程 **Celery 异步**执行，写回 MinIO `models/<设备>/`，设备侧按版本拉取并验签替换
 - 训练可被用户端 / 管理端取消；写回前复核任务状态，取消后不产出模型
 
 **管理控制台**
@@ -88,7 +90,7 @@
 | 机器学习 | scikit-learn（SVM）· NumPy · SciPy · python-speech-features |
 | 鉴权 | JWT（python-jose）· bcrypt |
 | 前端 | Vue 3 · TypeScript · Vite · Vue Router · ECharts |
-| 日志 / 监控 | structlog（JSON）· prometheus-client |
+| 日志 | structlog（结构化 JSON） |
 | 部署 | Docker Compose · GitHub Actions → GHCR |
 
 ---
@@ -106,9 +108,9 @@
 │   ├── services/               # MinIO 客户端、特征提取、设备数据、模型服务
 │   ├── tasks/                  # Celery：训练 / 推理 / 下载导出 / 数据导出 / 清理
 │   └── frontend/dist/          # 已构建的前端静态资源（Nginx 托管）
-├── config/                     # nginx / mysql / (prometheus|grafana|loki|promtail 预留)
+├── config/                     # nginx / mysql
 ├── scripts/                    # bootstrap、环境初始化、负样本转换等
-├── .github/workflows/          # 镜像同步 + 后端镜像构建
+├── .github/workflows/          # 基础镜像同步 + 后端镜像构建
 ├── docker-compose.yml
 ├── Dockerfile
 ├── requirements.txt
@@ -142,8 +144,9 @@ docker compose up -d
 
 ### 3. 访问
 
-- 前端主页：`http://<服务器地址>/`
-- 管理控制台：`http://<服务器地址>/#/admin`
+- 前端主页：`https://hivesystem.top/`（`http` 自动跳转到 `https`）
+- 管理控制台：`https://hivesystem.top/#/admin`
+- 对象存储（设备直传）：`https://s3.hivesystem.top`（经 Nginx 反代 MinIO，9000 不对外）
 - 健康检查：`GET /health`、`GET /ready`
 
 > 首次启动时若账号表为空，将按 `BOOTSTRAP_ADMIN_USER` / `BOOTSTRAP_ADMIN_PASSWORD`
@@ -162,7 +165,7 @@ docker compose up -d
 | DELETE | `/devices/{id}` | 删除设备（停任务、留数据） | 账号 |
 | POST | `/devices/inference` | 上报推理 + 环境指标 | 设备 Key |
 | GET | `/devices/summary` `/devices/by-name/{name}` | 聚合 / 详情 | 只读 |
-| GET | `/devices/{id}/presigned-url` | 预签名上传（`kind=audio\|feature`） | 设备 Key |
+| GET | `/devices/me/presigned-url` | 预签名上传（`kind=audio\|feature`） | 设备 Key |
 | POST | `/devices/{name}/model-update` | 触发模型更新 | 账号 |
 | POST | `/devices/{name}/model-update/cancel` | 取消更新 | 账号 |
 | POST | `/devices/{name}/key-reset-request` | 申请重置设备密钥 | 账号 |
@@ -177,9 +180,9 @@ docker compose up -d
 
 1. 用户在设备详情页点击**「更新检测模型」** → 后端登记 `training_jobs`（`waiting`）
 2. 设备将 16kHz 音频提取的 **60 维特征**经预签名直传 `features/<设备>/`
-3. worker 初查 + beat 每 20 分钟扫描：样本 ≥ 600 → 训练 `SVM(rbf) + StandardScaler`
-4. 结果写回 `models/<设备>/{svm,scaler}.pkl` 并登记 `model_versions`
-5. 设备侧比对 `Last-Modified` 拉取新模型自动替换；超 24h 样本不足则置 `cancelled`
+3. worker 初查 + beat 约每 **30 秒**扫描（近实时，进度与实际采集同步）：样本 ≥ 600 → 训练 `SVM(rbf) + StandardScaler`
+4. 结果写回 `models/<设备>/{svm,scaler}.pkl` 并登记 `model_versions`（新模型置为**生产版本 active**，旧版本弃用）
+5. 设备侧按版本拉取新模型，**Ed25519 验签通过**后原子替换；超 24h 样本不足则置 `cancelled`
 6. 训练期间可由用户端 / 管理端**取消**（写回前复核，取消则不产出）
 
 ---
@@ -203,7 +206,9 @@ docker compose pull && docker compose up -d
 
 ## 安全
 
-- SSH 密钥登录，数据库使用专用最小权限账号；敏感配置统一经 `.env` 管理，不入库、不入提交历史
-- 登录采用 `bcrypt` + `JWT`；**单账号单会话**（Redis 记录活动时间，空闲超时自动释放，陈旧会话可被顶替）
-- 敏感操作（删除设备、清除数据、强制下线、密钥重置）均需管理员操作与二次确认
+- **传输**：全站 HTTPS（Let's Encrypt 自动续期），禁用 TLS 1.0/1.1；启用 HSTS、CSP 等安全响应头；Web 层 **CORS 白名单**
+- **主机**：SSH **仅公钥登录**（禁用 root 密码登录）；部署 **fail2ban**，对 SSH 与 Nginx 的认证失败/扫描自动封禁；数据库使用专用最小权限账号
+- **鉴权**：登录 `bcrypt` + `JWT`，**单账号单会话**（Redis 记录活动时间，空闲超时释放，陈旧会话可被顶替）；设备 API Key 以**加盐 HMAC-SHA256** 存储
+- **模型**：Ed25519 签名，设备端验签通过后才启用
+- 敏感操作（删除设备、清除数据、强制下线、密钥重置）均需管理员操作与二次确认；敏感配置经 `.env` 管理，不入库、不入提交历史
 - 模型训练、数据导出等重任务全部异步执行，保障在线接口稳定
