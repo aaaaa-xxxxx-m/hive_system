@@ -385,12 +385,19 @@ async def _check_and_train(device_name: str):
 
         version = f"v{datetime.utcnow().strftime('%Y%m%d%H%M%S')}"
         async with Session() as db:
+            # 新模型直接置为生产：旧的生产模型标记弃用，新的置 active/valid（D-2 修复）
+            await db.execute(
+                update(ModelVersion)
+                .where(ModelVersion.is_active == True)
+                .values(is_active=False, status=ModelStatus.DEPRECATED)
+            )
             mv = ModelVersion(
                 version=version, model_type=ModelType.SVM,
                 minio_object_key=svm_key, scaler_object_key=scaler_key,
                 signature=signature, file_size=len(model_bytes), sha256_hash=model_sha,
                 training_dataset_size=len(X),
-                status=ModelStatus.VALIDATING, is_active=False, trained_at=datetime.utcnow(),
+                status=ModelStatus.ACTIVE, is_active=True,
+                trained_at=datetime.utcnow(), deployed_at=datetime.utcnow(),
             )
             db.add(mv)
             await db.commit()

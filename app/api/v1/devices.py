@@ -10,7 +10,7 @@ import uuid
 from app.core.database import get_db
 from app.models.models import (
     Account, Device, InferenceResult, DeviceStatus, InferenceLabel,
-    TrainingJob, TrainingJobStatus, ModelVersion, KeyResetRequest, KeyResetStatus,
+    TrainingJob, TrainingJobStatus, ModelVersion, ModelStatus, KeyResetRequest, KeyResetStatus,
 )
 from app.api.deps import get_current_account, require_viewer
 from app.schemas.schemas import (
@@ -788,7 +788,10 @@ async def get_device_model(
     mv = (
         await db.execute(
             select(ModelVersion)
-            .where(ModelVersion.minio_object_key == svm_key)
+            .where(
+                ModelVersion.minio_object_key == svm_key,
+                ModelVersion.status != ModelStatus.FAILED,
+            )
             .order_by(ModelVersion.created_at.desc())
             .limit(1)
         )
