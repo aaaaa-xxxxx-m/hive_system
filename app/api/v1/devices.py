@@ -4,9 +4,11 @@ from sqlalchemy import select, func, delete, update
 from typing import List, Optional
 from datetime import datetime
 import hashlib
+import hmac
 import secrets
 import uuid
 
+from app.core.config import get_settings
 from app.core.database import get_db
 from app.models.models import (
     Account, Device, InferenceResult, DeviceStatus, InferenceLabel,
@@ -27,8 +29,15 @@ from app.services.device_data import has_leftover
 router = APIRouter(prefix="/devices", tags=["Devices"])
 
 
-def hash_api_key(api_key: str) -> str:
+def _legacy_hash_api_key(api_key: str) -> str:
+    """旧格式：未加盐 SHA256（兼容历史设备）。"""
     return hashlib.sha256(api_key.encode()).hexdigest()
+
+
+def hash_api_key(api_key: str) -> str:
+    """加盐（HMAC-SHA256，密钥为 API_KEY_SALT）存储 API Key 摘要（V-8）。"""
+    salt = get_settings().API_KEY_SALT.encode("utf-8")
+    return hmac.new(salt, api_key.encode("utf-8"), hashlib.sha256).hexdigest()
 
 
 def generate_api_key() -> str:
@@ -36,8 +45,12 @@ def generate_api_key() -> str:
 
 
 async def get_device_by_api_key(db: AsyncSession, api_key: str) -> Optional[Device]:
-    key_hash = hash_api_key(api_key)
-    result = await db.execute(select(Device).where(Device.api_key_hash == key_hash))
+    # 同时匹配「加盐 HMAC」（新）与「未加盐 SHA256」（旧设备，兼容不失效）
+    result = await db.execute(
+        select(Device).where(
+            Device.api_key_hash.in_([hash_api_key(api_key), _legacy_hash_api_key(api_key)])
+        )
+    )
     return result.scalar_one_or_none()
 
 
