@@ -169,10 +169,6 @@ REDIS_PASSWORD=$(openssl rand -base64 32 | tr -d "=+/" | cut -c1-32)
 MINIO_ROOT_USER=minioadmin
 MINIO_ROOT_PASSWORD=$(openssl rand -base64 32 | tr -d "=+/" | cut -c1-32)
 
-# === Grafana ===
-GF_SECURITY_ADMIN_USER=admin
-GF_SECURITY_ADMIN_PASSWORD=$(openssl rand -base64 32 | tr -d "=+/" | cut -c1-32)
-
 # === JWT / API ===
 JWT_SECRET=$(openssl rand -base64 64 | tr -d "=+/" | cut -c1-64)
 API_KEY_SALT=$(openssl rand -base64 32 | tr -d "=+/" | cut -c1-32)

@@ -41,8 +41,6 @@ CREATE TABLE IF NOT EXISTS inference_results (
     inference_time_ms INT UNSIGNED COMMENT '推理耗时 (ms)',
     temperature DECIMAL(5, 2) COMMENT '温度 (°C)',
     humidity DECIMAL(5, 2) COMMENT '湿度 (%)',
-    battery_voltage DECIMAL(5, 3) COMMENT '电池电压 (V)',
-    signal_strength INT COMMENT '信号强度 (dBm)',
     recorded_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '采集时间',
     received_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '服务器接收时间',
     processed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '处理完成时间',
@@ -245,14 +243,14 @@ CREATE OR REPLACE VIEW v_device_latest AS
 SELECT
     t.id, t.device_name, t.name, t.status, t.last_seen_at, t.firmware_version,
     t.location_lat, t.location_lng, t.location_desc,
-    t.temperature, t.humidity, t.battery_voltage, t.signal_strength,
+    t.temperature, t.humidity,
     t.recorded_at AS sensor_recorded_at,
     t.probability_no_queen, t.probability_normal, t.label AS inference_label,
     t.confidence, t.recorded_at AS inference_recorded_at, t.model_version
 FROM (
     SELECT d.id, d.device_name, d.name, d.status, d.last_seen_at, d.firmware_version,
            d.location_lat, d.location_lng, d.location_desc,
-           ir.temperature, ir.humidity, ir.battery_voltage, ir.signal_strength,
+           ir.temperature, ir.humidity,
            ir.probability_no_queen, ir.probability_normal, ir.label, ir.confidence,
            ir.model_version, ir.recorded_at,
            ROW_NUMBER() OVER (PARTITION BY d.id ORDER BY ir.recorded_at DESC) AS rn
