@@ -95,11 +95,10 @@ async def _export(job_id: str):
                     ).scalars().all()
                     buf = io.StringIO()
                     w = csv.writer(buf)
-                    w.writerow(["时间", "温度(℃)", "湿度(%)", "电池电压(V)", "信号强度",
+                    w.writerow(["时间", "温度(℃)", "湿度(%)",
                                 "失王概率", "标签", "置信度", "模型版本", "音频键"])
                     for r in rows:
                         w.writerow([_iso(r.recorded_at), r.temperature, r.humidity,
-                                    r.battery_voltage, r.signal_strength,
                                     r.probability_no_queen, _enum_val(r.label),
                                     r.confidence, r.model_version, r.audio_object_key])
                     z.writestr("inference_results.csv", buf.getvalue().encode("utf-8-sig"))

@@ -145,8 +145,6 @@ class InferenceResult(Base):
     # 环境指标 (随音频一并上报)
     temperature: Mapped[Optional[float]] = mapped_column(Numeric(5, 2))
     humidity: Mapped[Optional[float]] = mapped_column(Numeric(5, 2))
-    battery_voltage: Mapped[Optional[float]] = mapped_column(Numeric(5, 3))
-    signal_strength: Mapped[Optional[int]] = mapped_column(Integer)
     recorded_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), nullable=False
     )

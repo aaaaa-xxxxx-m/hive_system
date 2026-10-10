@@ -87,8 +87,6 @@ class DeviceResponse(DeviceBase):
 class DeviceWithDetails(DeviceResponse):
     temperature: Optional[float]
     humidity: Optional[float]
-    battery_voltage: Optional[float]
-    signal_strength: Optional[int]
     sensor_recorded_at: Optional[datetime]
     probability_no_queen: Optional[float]
     probability_normal: Optional[float]
@@ -141,8 +139,6 @@ class DeviceRecordResponse(BaseModel):
     device_name: str
     temperature: Optional[float]
     humidity: Optional[float]
-    battery_voltage: Optional[float]
-    signal_strength: Optional[int]
     recorded_at: datetime
     received_at: datetime
 
@@ -160,8 +156,6 @@ class InferenceResultCreate(BaseModel):
     # 环境指标 (随音频一并上报, 方案 C)
     temperature: Optional[float] = Field(None, ge=-50, le=100)
     humidity: Optional[float] = Field(None, ge=0, le=100)
-    battery_voltage: Optional[float] = Field(None, ge=0, le=5)
-    signal_strength: Optional[int] = Field(None, ge=-120, le=0)
     recorded_at: Optional[datetime] = None
 
 
@@ -181,8 +175,6 @@ class InferenceResultResponse(BaseModel):
     inference_time_ms: Optional[int]
     temperature: Optional[float]
     humidity: Optional[float]
-    battery_voltage: Optional[float]
-    signal_strength: Optional[int]
     recorded_at: datetime
     received_at: datetime
     processed_at: datetime

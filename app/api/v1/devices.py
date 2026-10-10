@@ -219,8 +219,6 @@ async def _device_with_details(device: Device, db: AsyncSession) -> DeviceWithDe
     data.update(
         temperature=record.temperature if record else None,
         humidity=record.humidity if record else None,
-        battery_voltage=record.battery_voltage if record else None,
-        signal_strength=record.signal_strength if record else None,
         sensor_recorded_at=record.recorded_at if record else None,
         probability_no_queen=record.probability_no_queen if record else None,
         probability_normal=record.probability_normal if record else None,
@@ -335,8 +333,6 @@ async def upload_inference(
         inference_time_ms=data.inference_time_ms,
         temperature=data.temperature,
         humidity=data.humidity,
-        battery_voltage=data.battery_voltage,
-        signal_strength=data.signal_strength,
         recorded_at=data.recorded_at or datetime.utcnow(),
     )
     db.add(inference)
