@@ -63,32 +63,29 @@ async def _export(job_id: str):
             "信号强度(dBm)", "失王概率", "标签", "置信度", "模型版本", "原始音频键",
         ])
 
-        audio_buf = io.BytesIO()
+        # 直接平铺：<zip>/audio/0001.wav ... <zip>/metrics.csv（不再嵌套内层 zip，避免“看起来是空的”）
+        outer = io.BytesIO()
         missing = 0
-        with zipfile.ZipFile(audio_buf, "w", zipfile.ZIP_DEFLATED) as audio_zip:
+        with zipfile.ZipFile(outer, "w", zipfile.ZIP_DEFLATED) as bundle:
             for idx, r in enumerate(rows, start=1):
                 seq = f"{idx:04d}"
-                fname = f"{seq}.wav"
+                arcname = f"audio/{seq}.wav"
                 try:
                     data = minio.download_file(r.audio_object_key)
-                    audio_zip.writestr(fname, data)
+                    bundle.writestr(arcname, data)
                 except Exception as e:  # noqa: BLE001
                     missing += 1
                     logger.warning(f"audio missing: {r.audio_object_key}: {e}")
                 writer.writerow([
-                    idx, fname,
+                    idx, f"{seq}.wav",
                     r.recorded_at.isoformat() if r.recorded_at else "",
                     r.temperature, r.humidity, r.battery_voltage, r.signal_strength,
                     r.probability_no_queen, _label_value(r.label), r.confidence,
                     r.model_version, r.audio_object_key,
                 ])
+            bundle.writestr("metrics.csv", metrics.getvalue().encode("utf-8-sig"))
 
         await _save(Session, job_id, progress=60)
-
-        outer = io.BytesIO()
-        with zipfile.ZipFile(outer, "w", zipfile.ZIP_DEFLATED) as bundle:
-            bundle.writestr("audio.zip", audio_buf.getvalue())
-            bundle.writestr("metrics.csv", metrics.getvalue().encode("utf-8-sig"))
 
         object_key = f"exports/{device_name}/{job_id}.zip"
         minio.upload_file(object_key, outer.getvalue(), content_type="application/zip")
