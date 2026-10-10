@@ -1,7 +1,7 @@
 from celery import shared_task
 from celery.utils.log import get_task_logger
 from datetime import datetime, timedelta
-from app.core.database import async_session_maker
+from app.core.database import task_session
 from app.models.models import RawFeature, AuditLog, Device, DeviceStatus
 from sqlalchemy import delete, update, select, func
 import asyncio
@@ -17,7 +17,7 @@ def cleanup_old_raw_features():
     async def _cleanup():
         cutoff = datetime.utcnow() - timedelta(days=30)
 
-        async with async_session_maker() as db:
+        async with task_session() as db:
             # 先获取要删除的文件键，以便从 MinIO 删除
             from app.services.minio_client import get_minio_client
             minio = get_minio_client()
@@ -54,7 +54,7 @@ def cleanup_old_audit_logs():
     async def _cleanup():
         cutoff = datetime.utcnow() - timedelta(days=90)
 
-        async with async_session_maker() as db:
+        async with task_session() as db:
             result = await db.execute(
                 delete(AuditLog).where(AuditLog.created_at < cutoff)
             )
@@ -72,7 +72,7 @@ def check_device_heartbeat():
     async def _check():
         threshold = datetime.utcnow() - timedelta(minutes=10)
 
-        async with async_session_maker() as db:
+        async with task_session() as db:
             # 找出超过 10 分钟无心跳的在线设备
             result = await db.execute(
                 select(Device.id, Device.device_name)
@@ -105,7 +105,7 @@ def cleanup_orphaned_minio_files():
         from app.services.minio_client import get_minio_client
         minio = get_minio_client()
 
-        async with async_session_maker() as db:
+        async with task_session() as db:
             # 获取所有被引用的 object_key
             from app.models.models import InferenceResult, RawFeature, ModelVersion
             from sqlalchemy import union_all

@@ -7,7 +7,7 @@ import time
 from app.tasks.celery_app import celery_app
 from app.services.minio_client import get_minio_client
 from app.services.model_service import get_model_manager
-from app.core.database import async_session_maker
+from app.core.database import task_session
 from app.models.models import InferenceResult, Device, InferenceLabel
 from sqlalchemy import select, update
 import asyncio
@@ -26,7 +26,7 @@ async def _get_production_model():
     """获取当前生产模型"""
     global _cached_model, _cached_scaler, _cached_version
 
-    async with async_session_maker() as db:
+    async with task_session() as db:
         from app.models.models import ModelVersion, ModelStatus
         from sqlalchemy import select
         result = await db.execute(
@@ -96,7 +96,7 @@ def async_inference_task(self, device_id: int, device_name: str, audio_object_ke
         total_time_ms = int((time.time() - start_time) * 1000)
 
         # 5. 保存结果
-        async with async_session_maker() as db:
+        async with task_session() as db:
             result = InferenceResult(
                 device_id=device_id,
                 device_name=device_name,

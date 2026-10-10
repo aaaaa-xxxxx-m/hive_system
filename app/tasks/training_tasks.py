@@ -13,7 +13,7 @@ from sklearn.metrics import accuracy_score, classification_report, confusion_mat
 from app.tasks.celery_app import celery_app
 from app.services.minio_client import get_minio_client
 from app.services.model_service import get_model_manager
-from app.core.database import async_session_maker
+from app.core.database import task_session
 from app.core.config import get_settings
 from app.models.models import TrainingJob, ModelVersion, ModelStatus, TrainingJobStatus, ModelType
 from app.services.feature_extract import FEATURE_DIM
@@ -42,7 +42,7 @@ def train_model_task(self, job_id: str, config: dict, positive_keys: list, negat
     logger.info(f"Starting training job {job_id}")
 
     async def _train():
-        async with async_session_maker() as db:
+        async with task_session() as db:
             # 更新任务状态为运行中
             await db.execute(
                 update(TrainingJob)
@@ -236,7 +236,7 @@ def deploy_model_task(self, model_version_id: int):
     logger.info(f"Deploying model version {model_version_id}")
 
     async def _deploy():
-        async with async_session_maker() as db:
+        async with task_session() as db:
             # 获取模型版本
             result = await db.execute(select(ModelVersion).where(ModelVersion.id == model_version_id))
             model_version = result.scalar_one_or_none()
